@@ -36,6 +36,8 @@
     button:hover { border-color:var(--live); }
     button:disabled { opacity:.35; cursor:not-allowed; }
     .controls { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+    input { width:120px; border:1px solid var(--line); background:#09131c;
+      color:var(--text); border-radius:7px; padding:8px; }
     .detail { min-height:20px; margin-top:10px; color:var(--muted);
       font:12px ui-monospace,monospace; }
     .warn { color:var(--bad); }
@@ -58,9 +60,11 @@
         <div class="legend"><span><i class="dot" style="background:var(--live)"></i>attuale</span>
           <span><i class="dot" style="background:var(--goal)"></i>richiesta</span>
           <span><i class="dot" style="background:var(--fit)"></i>realizzabile</span></div>
-        <div class="controls"><button class="copy">Copia attuale</button>
-          <button class="project">Proietta</button><button class="publish">Pubblica goal</button></div>
-        <div class="detail">Trascina i marker arancioni per impostare la forma.</div>
+        <div class="controls"><label>κ goal [m⁻¹] <input class="curvature" type="text" inputmode="decimal" placeholder="es. -1,00"></label>
+          <button class="project">Calcola inferenza</button>
+          <button class="execute">Invia ai motori</button>
+          <button class="cancel">Annulla movimento</button></div>
+        <div class="detail">Inserisci la curvatura firmata desiderata.</div>
       </article>
       <article class="arm" data-arm="arm_2">
         <div class="arm-head"><h2>Arm 2</h2><span class="label model">modello —</span></div>
@@ -68,14 +72,16 @@
         <div class="legend"><span><i class="dot" style="background:var(--live)"></i>attuale</span>
           <span><i class="dot" style="background:var(--goal)"></i>richiesta</span>
           <span><i class="dot" style="background:var(--fit)"></i>realizzabile</span></div>
-        <div class="controls"><button class="copy">Copia attuale</button>
-          <button class="project">Proietta</button><button class="publish">Pubblica goal</button></div>
-        <div class="detail">Trascina i marker arancioni per impostare la forma.</div>
+        <div class="controls"><label>κ goal [m⁻¹] <input class="curvature" type="text" inputmode="decimal" placeholder="es. 1,00"></label>
+          <button class="project">Calcola inferenza</button>
+          <button class="execute">Invia ai motori</button>
+          <button class="cancel">Annulla movimento</button></div>
+        <div class="detail">Inserisci la curvatura firmata desiderata.</div>
       </article>
     </section>
   </main>
   <script>
-    const local = {arm_1:{requested:null,drag:-1}, arm_2:{requested:null,drag:-1}};
+    const local = {arm_1:{requested:null,drag:-1,ready:false,error:null}, arm_2:{requested:null,drag:-1,ready:false,error:null}};
     let latest = null;
     const bounds = {xmin:-0.22,xmax:0.22,ymin:0.0,ymax:0.65};
     const xy = (p,c) => [(p.x-bounds.xmin)/(bounds.xmax-bounds.xmin)*c.width,
@@ -101,34 +107,46 @@
       const model=article.querySelector('.model');
       if(state?.model?.available){const tag=state.model.approved?'approvato':'candidato';
         const fit=state.model.converged===false?' · non convergente':'';
-        model.textContent=`${tag}${fit} · RMSE ${state.model.validation_rmse_mm?.toFixed(1)??'—'} mm · q ${state.model.q_min.toFixed(0)}…${state.model.q_max.toFixed(0)}`;
+        model.textContent=`${tag}${fit} · κ ${state.model.curvature_min.toFixed(3)}…${state.model.curvature_max.toFixed(3)} m⁻¹ · q ${state.model.q_min.toFixed(0)}…${state.model.q_max.toFixed(0)}`;
       }else model.textContent='modello non caricato';
       article.querySelector('.project').disabled=!state?.model?.available;
-      article.querySelector('.publish').disabled=!latest?.goal_publish_enabled||!state?.model?.approved;
-      if(state?.projection) article.querySelector('.detail').textContent=
-        `q*=${state.projection.q.toFixed(2)} · residuo=${(1000*state.projection.weighted_error_m).toFixed(2)} mm`;
+      const moving=latest?.motion?.state==='starting'||latest?.motion?.state==='moving';
+      article.querySelector('.execute').disabled=!latest?.motor_execute_enabled||!local[arm].ready||moving;
+      article.querySelector('.cancel').disabled=!moving||latest?.motion?.arm!==arm;
+      if(state?.projection){let text=`κ richiesta=${Number(state.projection.curvature_target??0).toFixed(3)} m⁻¹ · κ prevista=${Number(state.projection.curvature_achieved??0).toFixed(3)} m⁻¹ · q target=${state.projection.q.toFixed(2)}`;
+        if(state.projection.curvature_clamped)text+=` · FUORI RANGE: usare ${state.projection.curvature_min.toFixed(3)}…${state.projection.curvature_max.toFixed(3)}`;
+        if(latest?.motion?.arm===arm)text+=` · movimento ${latest.motion.state} · q=${Number(latest.motion.current_q??0).toFixed(0)}`;
+        article.querySelector('.detail').textContent=text;}
+      if(local[arm].error)article.querySelector('.detail').innerHTML=`<span class="warn">${local[arm].error}</span>`;
     }
     function setTelemetry(s){
       const m=s.motor||{}; document.querySelector('#enc').textContent=(m.encoder_counts||['—','—']).join(' / ');
       document.querySelector('#cur').textContent=(m.current_a_host||[]).map(v=>`${Number(v).toFixed(2)} A`).join(' / ')||'—';
       document.querySelector('#pwm').textContent=(m.applied_commands||['—','—']).join(' / ');
       const v=s.vision||{};document.querySelector('#vision').textContent=(v.complete_arms||[]).join(', ')||'incompleta';
-      document.querySelector('#health').textContent=`frame ${v.frame??'—'} · ground ${v.reference_frame_locked?'locked':'waiting'} · goal ${s.goal_publish_enabled?'ENABLED':'disabled'}`;
+      document.querySelector('#health').textContent=`frame ${v.frame??'—'} · ground ${v.reference_frame_locked?'locked':'waiting'} · motori ${s.motor_execute_enabled?'ABILITATI':'disabilitati'} · modo ${s.motion_mode??'—'}`;
     }
     async function update(){try{const r=await fetch('/api/state');latest=await r.json();setTelemetry(latest);
       document.querySelectorAll('.arm').forEach(a=>draw(a,a.dataset.arm));}catch(e){document.querySelector('#health').textContent='dashboard offline';}}
-    async function project(arm,publish){const points=local[arm].requested;
-      if(!points)return;const r=await fetch('/api/goal',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({arm,points,publish})});const out=await r.json();
-      const a=document.querySelector(`[data-arm="${arm}"]`);if(!r.ok){a.querySelector('.detail').innerHTML=`<span class="warn">${out.error}</span>`;}await update();}
+    async function project(arm){const a=document.querySelector(`[data-arm="${arm}"]`);
+      const raw=a.querySelector('.curvature').value.trim().replace(',','.');const curvature=Number(raw);
+      if(!raw||!Number.isFinite(curvature)){a.querySelector('.detail').innerHTML='<span class="warn">Inserire una curvatura numerica.</span>';return false;}
+      try{const r=await fetch('/api/curvature',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({arm,curvature})});const out=await r.json();
+        if(!r.ok){local[arm].error=out.error;draw(a,arm);return false;}
+        local[arm].error=null;
+        latest.arms[arm].feasible={points:out.feasible};latest.arms[arm].projection=out.projection;draw(a,arm);return true;
+      }catch(e){a.querySelector('.detail').innerHTML='<span class="warn">Errore di comunicazione con la dashboard.</span>';return false;}}
+    async function execute(arm){const p=latest?.arms?.[arm]?.projection;if(!p)return;
+      const current=Number(p.q_current??0),target=Number(p.q);
+      if(!confirm(`${arm}: inviare il motore da q=${current.toFixed(1)} a q=${target.toFixed(1)}?`))return;
+      const r=await fetch('/api/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({arm})});
+      const out=await r.json();if(!r.ok)local[arm].error=out.error;else local[arm].error=null;await update();}
+    async function cancel(){await fetch('/api/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});await update();}
     document.querySelectorAll('.arm').forEach(a=>{const arm=a.dataset.arm,c=a.querySelector('canvas');
-      a.querySelector('.copy').onclick=()=>{const p=latest?.arms?.[arm]?.current?.points;if(p)local[arm].requested=structuredClone(p);draw(a,arm);};
-      a.querySelector('.project').onclick=()=>project(arm,false);a.querySelector('.publish').onclick=()=>project(arm,true);
-      c.onpointerdown=e=>{const pts=local[arm].requested;if(!pts)return;const r=c.getBoundingClientRect(),x=(e.clientX-r.left)*c.width/r.width,y=(e.clientY-r.top)*c.height/r.height;
-        let best=-1,dist=1e9;pts.forEach((p,i)=>{const v=xy(p,c),d=(v[0]-x)**2+(v[1]-y)**2;if(d<dist){dist=d;best=i;}});if(dist<900){local[arm].drag=best;c.setPointerCapture(e.pointerId);}};
-      c.onpointermove=e=>{if(local[arm].drag<0)return;const r=c.getBoundingClientRect(),x=(e.clientX-r.left)*c.width/r.width,y=(e.clientY-r.top)*c.height/r.height;
-        const p=world(x,y,c);p.z=local[arm].requested[local[arm].drag].z||0;local[arm].requested[local[arm].drag]=p;draw(a,arm);};
-      c.onpointerup=()=>local[arm].drag=-1;});
+      a.querySelector('.project').onclick=async()=>{local[arm].ready=await project(arm);draw(a,arm);};
+      a.querySelector('.execute').onclick=()=>execute(arm);a.querySelector('.cancel').onclick=cancel;
+      a.querySelector('.curvature').oninput=()=>{local[arm].ready=false;local[arm].error=null;draw(a,arm);};});
     setInterval(update,200);update();
   </script>
 </body>

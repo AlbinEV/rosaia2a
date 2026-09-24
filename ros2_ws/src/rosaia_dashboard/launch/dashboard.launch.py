@@ -14,6 +14,7 @@ def generate_launch_description():
         DeclareLaunchArgument('arm_1_model', default_value=''),
         DeclareLaunchArgument('arm_2_model', default_value=''),
         DeclareLaunchArgument('enable_goal_publish', default_value='false'),
+        DeclareLaunchArgument('enable_motor_execute', default_value='false'),
         Node(
             package='rosaia_dashboard',
             executable='dashboard',
@@ -30,6 +31,10 @@ def generate_launch_description():
                     ),
                     'enable_goal_publish': ParameterValue(
                         LaunchConfiguration('enable_goal_publish'),
+                        value_type=bool,
+                    ),
+                    'enable_motor_execute': ParameterValue(
+                        LaunchConfiguration('enable_motor_execute'),
                         value_type=bool,
                     ),
                 },

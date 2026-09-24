@@ -9,4 +9,28 @@ rosaia_dashboard:
     model_directories: ["", ""]
     arm_1_model_directory: ""
     arm_2_model_directory: ""
+    axis_indices: [0, 1]
+    encoder_signs: [1, -1]
+    encoder_zero_raws: [0, 0]
+    # m^2/count^2. Resolves flat-manifold ambiguity while leaving the shape
+    # term dominant where deformation is observable.
+    projection_q_regularization: [1.0e-8, 1.0e-8]
+    projection_q_regularization_transition_m: [0.003, 0.003]
     enable_goal_publish: false
+    enable_motor_execute: false
+    maximum_move_counts: 220
+    motor_step_counts: 5
+    target_tolerance_counts: 5
+    motor_step_timeout_s: 4.0
+    motor_step_retries: 3
+    command_to_q_signs: [-1, -1]
+    contraction_pwm: [110, 180]
+    release_pwm: [105, 120]
+    high_q_thresholds: [190, 10000]
+    high_q_contraction_pwm: [130, 180]
+    maximum_abs_current_a: [2.8, 2.8]
+    motion_mode: "continuous"
+    continuous_control_rate_hz: 30.0
+    continuous_motion_timeout_s: 30.0
+    continuous_no_motion_timeout_s: 3.0
+    continuous_ramp_s: 0.5

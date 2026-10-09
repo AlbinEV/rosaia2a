@@ -17,6 +17,9 @@ data/sessions/
 # explicitly approved model artifacts to a versioned release directory.
 data/models/
 data/reports/
+data/logs/
+data/workflows/
+data/control_tests/
 
 # Python
 __pycache__/
@@ -33,3 +36,6 @@ __pycache__/
 .arduino/
 .arduino-cli.yaml
 backup/
+
+# Claude Code local settings
+.claude/settings.local.json

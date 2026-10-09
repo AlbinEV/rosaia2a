@@ -10,30 +10,38 @@ encoder_velocity_controller:
     command_to_q_signs: [-1, -1]
     minimum_positions: [0.0, 0.0]
     maximum_positions: [300.0, 300.0]
-    position_guard_counts: [10.0, 10.0]
+    # Firmware enforces the hard [0, 300] bounds. A host guard of ten counts
+    # prevented a controlled return from q<10 to the q=0 home.
+    position_guard_counts: [0.0, 0.0]
     breakaway_pwm: [150.0, 122.0]
     running_pwm: [140.0, 105.0]
-    # Conservative envelopes from two bidirectional maps on 2026-09-23.
-    # Operational positive velocity is contraction; negative is release.
-    axis_0_contraction_positions: [0.0, 60.0, 120.0, 170.0, 210.0]
-    axis_0_contraction_breakaway_pwm: [65.0, 80.0, 110.0, 80.0, 100.0]
-    axis_0_contraction_running_pwm: [65.0, 80.0, 110.0, 80.0, 100.0]
-    axis_0_release_positions: [40.0, 60.0, 120.0, 170.0, 210.0]
-    axis_0_release_breakaway_pwm: [85.0, 65.0, 85.0, 105.0, 95.0]
-    axis_0_release_running_pwm: [85.0, 65.0, 85.0, 105.0, 95.0]
-    axis_1_contraction_positions: [0.0, 60.0, 120.0, 170.0, 210.0]
-    axis_1_contraction_breakaway_pwm: [80.0, 90.0, 145.0, 110.0, 140.0]
-    axis_1_contraction_running_pwm: [80.0, 90.0, 145.0, 110.0, 140.0]
-    axis_1_release_positions: [40.0, 60.0, 120.0, 170.0, 210.0]
-    axis_1_release_breakaway_pwm: [80.0, 95.0, 85.0, 70.0, 75.0]
-    axis_1_release_running_pwm: [80.0, 95.0, 85.0, 70.0, 75.0]
+    # Conservative loaded-arm seed values at 5.6 V. PWM still approaches these
+    # values through maximum_pwm_rate; refine the curves from the new logs.
+    axis_0_contraction_positions: [0.0, 300.0]
+    axis_0_contraction_breakaway_pwm: [150.0, 150.0]
+    axis_0_contraction_running_pwm: [150.0, 150.0]
+    axis_0_release_positions: [0.0, 300.0]
+    axis_0_release_breakaway_pwm: [70.0, 70.0]
+    axis_0_release_running_pwm: [40.0, 40.0]
+    axis_1_contraction_positions: [0.0, 300.0]
+    axis_1_contraction_breakaway_pwm: [100.0, 100.0]
+    axis_1_contraction_running_pwm: [55.0, 55.0]
+    axis_1_release_positions: [0.0, 300.0]
+    axis_1_release_breakaway_pwm: [70.0, 70.0]
+    axis_1_release_running_pwm: [40.0, 40.0]
     feedforward_pwm_per_count_s: [0.6, 0.6]
     proportional_gain: [0.4, 0.4]
     integral_gain: [0.15, 0.15]
     maximum_pwm: [200, 200]
     movement_velocity_threshold: [2.0, 2.0]
     movement_hold_s: [0.25, 0.25]
-    maximum_pwm_rate: [400.0, 400.0]
+    # Limit PWM slew so breakaway is approached progressively rather than as
+    # an instantaneous command. Refine per arm during the motion calibration.
+    maximum_pwm_rate: [180.0, 180.0]
+    maximum_pwm_fall_rate: [3000.0, 3000.0]
     velocity_filter_alpha: 0.35
     maximum_reference_age_s: 0.15
     maximum_telemetry_age_s: 0.10
+    # Demo default: 20% more effort than the identified base schedules below.
+    # Runtime UI choices can restore 1.0 or select -10/-20% as needed.
+    initial_pwm_scale: 1.20

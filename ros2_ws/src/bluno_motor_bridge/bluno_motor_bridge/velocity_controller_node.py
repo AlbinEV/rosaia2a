@@ -41,6 +41,7 @@ class EncoderVelocityController(Node):
         self.declare_parameter('movement_velocity_threshold', [2.0, 2.0])
         self.declare_parameter('movement_hold_s', [0.25, 0.25])
         self.declare_parameter('maximum_pwm_rate', [400.0, 400.0])
+        self.declare_parameter('maximum_pwm_fall_rate', [2000.0, 2000.0])
         for axis in range(2):
             for direction in ('contraction', 'release'):
                 prefix = f'axis_{axis}_{direction}'
@@ -50,6 +51,7 @@ class EncoderVelocityController(Node):
         self.declare_parameter('velocity_filter_alpha', 0.35)
         self.declare_parameter('maximum_reference_age_s', 0.15)
         self.declare_parameter('maximum_telemetry_age_s', 0.10)
+        self.declare_parameter('initial_pwm_scale', 1.0)
 
         self._rate = float(self.get_parameter('control_rate_hz').value)
         topics = self._strings('reference_topics')
@@ -67,12 +69,14 @@ class EncoderVelocityController(Node):
         movement_threshold = self._floats('movement_velocity_threshold')
         movement_hold = self._floats('movement_hold_s')
         maximum_pwm_rate = self._floats('maximum_pwm_rate')
+        maximum_pwm_fall_rate = self._floats('maximum_pwm_fall_rate')
         groups = (
             topics, self._encoder_signs, command_signs,
             self._minimum_positions, self._maximum_positions,
             self._position_guards,
             breakaway, running, feedforward, proportional, integral,
             maximum_pwm, movement_threshold, movement_hold, maximum_pwm_rate,
+            maximum_pwm_fall_rate,
         )
         if self._rate <= 0.0 or any(len(values) != 2 for values in groups):
             raise ValueError('controller rate must be positive and arrays length 2')
@@ -107,6 +111,7 @@ class EncoderVelocityController(Node):
                 movement_velocity_threshold=movement_threshold[index],
                 movement_hold_s=movement_hold[index],
                 maximum_pwm_rate=maximum_pwm_rate[index],
+                maximum_pwm_fall_rate=maximum_pwm_fall_rate[index],
                 positive_friction=self._friction_schedule(
                     index, 'contraction'
                 ),
@@ -139,6 +144,12 @@ class EncoderVelocityController(Node):
         self._firmware_flags = 0
         self._last_control_time = time.monotonic()
         self._last_reason = 'waiting_for_telemetry'
+        self._pwm_scale = float(
+            self.get_parameter('initial_pwm_scale').value
+        )
+        if not 0.8 <= self._pwm_scale <= 1.2:
+            raise ValueError('initial_pwm_scale must be in [0.8, 1.2]')
+        self._last_commands = [0, 0]
 
         self._command_publisher = self.create_publisher(
             Int16MultiArray, '/motor_command', 20
@@ -147,7 +158,10 @@ class EncoderVelocityController(Node):
             String, '/encoder_velocity_controller/status', 10
         )
         self._subscriptions = [
-            self.create_subscription(String, '/motor_state', self._on_state, 50)
+            self.create_subscription(String, '/motor_state', self._on_state, 50),
+            self.create_subscription(
+                Float64, '/motor_pwm_scale', self._on_pwm_scale, 10
+            ),
         ]
         for axis, topic in enumerate(topics):
             self._subscriptions.append(self.create_subscription(
@@ -224,6 +238,18 @@ class EncoderVelocityController(Node):
         self._last_telemetry_time = now
         self._firmware_flags = flags
 
+    def _on_pwm_scale(self, message: Float64) -> None:
+        """Apply a bounded global PWM multiplier only while output is zero."""
+        scale = float(message.data)
+        if not 0.8 <= scale <= 1.2:
+            self.get_logger().error('rejected PWM scale outside [0.8, 1.2]')
+            return
+        if any(self._last_commands):
+            self.get_logger().warning('rejected PWM scale while motors are active')
+            return
+        self._pwm_scale = scale
+        self.get_logger().info(f'PWM output scale set to {scale:.2f}')
+
     def _zero_commands(self, reason: str) -> list[int]:
         for controller in self._controllers:
             controller.reset()
@@ -272,7 +298,9 @@ class EncoderVelocityController(Node):
                         self._velocities[axis],
                         dt_s,
                         position=position,
+                        output_scale=self._pwm_scale,
                     ))
+        self._last_commands = commands
         message = Int16MultiArray()
         message.data = commands
         self._command_publisher.publish(message)
@@ -285,6 +313,7 @@ class EncoderVelocityController(Node):
                 'velocity': self._velocities,
                 'reference': self._references,
                 'command': commands,
+                'pwm_scale': self._pwm_scale,
             }, separators=(',', ':'))
             self._status_publisher.publish(status)
 

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -24,6 +24,21 @@
       letter-spacing:.08em; }
     .value { margin-top:7px; font-size:18px; font-variant-numeric:tabular-nums; }
     .arms { display:grid; grid-template-columns:repeat(2,minmax(420px,1fr)); gap:16px; }
+    .overview { margin-bottom:16px; }
+    .views { display:grid; grid-template-columns:minmax(420px,1fr) minmax(420px,1fr);
+      gap:16px; margin-bottom:16px; }
+    .views .overview { margin-bottom:0; }
+    #camera-view { width:100%; aspect-ratio:16/9; object-fit:contain; display:block;
+      margin:10px 0 0; border-radius:8px; background:#05090d; }
+    #camera-status { margin-top:8px; color:var(--muted); font-size:12px;
+      font-variant-numeric:tabular-nums; }
+    #front-view { width:100%; height:420px; aspect-ratio:auto; margin:10px 0 0; }
+    .diagnostics { display:grid; grid-template-columns:minmax(520px,2fr) minmax(260px,1fr);
+      gap:16px; margin-bottom:16px; }
+    #current-chart { width:100%; height:230px; aspect-ratio:auto; margin:10px 0 0; }
+    .encoder-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:10px; }
+    .encoder-value { font-size:30px; color:var(--live); font-variant-numeric:tabular-nums; }
+    .chart-legend { display:flex; gap:18px; margin-top:8px; color:var(--muted); font-size:12px; }
     .arm-head { display:flex; justify-content:space-between; align-items:center; }
     h2 { margin:0; font-size:17px; }
     canvas { width:100%; aspect-ratio:1/1.15; display:block; margin:10px 0;
@@ -36,118 +51,222 @@
     button:hover { border-color:var(--live); }
     button:disabled { opacity:.35; cursor:not-allowed; }
     .controls { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
-    input { width:120px; border:1px solid var(--line); background:#09131c;
+    .demo-controls { display:flex; flex-wrap:wrap; gap:9px; margin-bottom:16px;
+      padding:12px 14px; border:1px solid var(--line); border-radius:12px;
+      background:var(--panel); align-items:center; }
+    .demo-controls .label { margin-right:auto; }
+    .primary { border-color:var(--fit); }
+    .stop { border-color:var(--bad); }
+    input,select { width:120px; border:1px solid var(--line); background:#09131c;
       color:var(--text); border-radius:7px; padding:8px; }
     .detail { min-height:20px; margin-top:10px; color:var(--muted);
       font:12px ui-monospace,monospace; }
     .warn { color:var(--bad); }
-    @media(max-width:900px) { .arms,.telemetry { grid-template-columns:1fr; } }
+    @media(max-width:900px) { .arms,.telemetry,.diagnostics,.views { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
-  <header><h1>ROSAIA · Two-arm shape control</h1><div id="health">connessione…</div></header>
+  <header><h1>ROSAIA · Two-arm shape control</h1><div id="health">connecting…</div></header>
   <main>
+    <section class="demo-controls">
+      <span class="label">Demo sequence</span>
+      <button id="preset-demo">Load demo shapes</button>
+      <button id="project-both">Compute both</button>
+      <button id="execute-both" class="primary">Move both arms</button>
+      <button id="home-both">Controlled home</button>
+      <button id="set-home">Set current position as home</button>
+      <label>PWM intensity
+        <select id="pwm-scale">
+          <option value="-20">−20%</option><option value="-10">−10%</option>
+          <option value="0">Original baseline</option>
+          <option value="10">+10%</option><option value="20" selected>+20% (default)</option>
+        </select>
+      </label>
+      <button id="apply-pwm-scale">Apply PWM</button>
+      <button id="stop-all" class="stop">STOP</button>
+    </section>
     <section class="telemetry">
-      <div class="card"><div class="label">Encoder q raw</div><div class="value" id="enc">—</div></div>
-      <div class="card"><div class="label">Corrente</div><div class="value" id="cur">—</div></div>
-      <div class="card"><div class="label">PWM applicato</div><div class="value" id="pwm">—</div></div>
-      <div class="card"><div class="label">Visione</div><div class="value" id="vision">—</div></div>
+      <div class="card"><div class="label">Encoder Arm 1</div><div class="value" id="enc-top-1">—</div></div>
+      <div class="card"><div class="label">Encoder Arm 2</div><div class="value" id="enc-top-2">—</div></div>
+      <div class="card"><div class="label">Applied PWM</div><div class="value" id="pwm">—</div></div>
+      <div class="card"><div class="label">Vision</div><div class="value" id="vision">—</div></div>
+    </section>
+    <section class="views">
+      <article class="overview card">
+        <h2>RealSense · live ArUco detection</h2>
+        <img id="camera-view" alt="Annotated RealSense RGB stream">
+        <div id="camera-status">waiting for annotated frame…</div>
+      </article>
+      <article class="overview card">
+        <h2>Live front-view reconstruction</h2>
+        <canvas id="front-view" width="600" height="420"></canvas>
+      </article>
+    </section>
+    <section class="diagnostics">
+      <article class="card"><h2>Motor current · last 30 seconds</h2>
+        <canvas id="current-chart" width="900" height="230"></canvas>
+        <div class="chart-legend"><span><i class="dot" style="background:var(--live)"></i>Arm 1 <b id="cur-1">—</b></span>
+          <span><i class="dot" style="background:var(--goal)"></i>Arm 2 <b id="cur-2">—</b></span></div>
+      </article>
+      <article class="card"><h2>Encoder</h2><div class="encoder-grid">
+        <div><div class="label">Arm 1 · raw</div><div class="encoder-value" id="enc-1">—</div></div>
+        <div><div class="label">Arm 2 · raw</div><div class="encoder-value" id="enc-2">—</div></div>
+      </div></article>
     </section>
     <section class="arms">
       <article class="arm" data-arm="arm_1">
-        <div class="arm-head"><h2>Arm 1</h2><span class="label model">modello —</span></div>
-        <canvas width="520" height="600"></canvas>
-        <div class="legend"><span><i class="dot" style="background:var(--live)"></i>attuale</span>
-          <span><i class="dot" style="background:var(--goal)"></i>richiesta</span>
-          <span><i class="dot" style="background:var(--fit)"></i>realizzabile</span></div>
-        <div class="controls"><label>κ goal [m⁻¹] <input class="curvature" type="text" inputmode="decimal" placeholder="es. -1,00"></label>
-          <button class="project">Calcola inferenza</button>
-          <button class="execute">Invia ai motori</button>
-          <button class="cancel">Annulla movimento</button></div>
-        <div class="detail">Inserisci la curvatura firmata desiderata.</div>
+        <div class="arm-head"><h2>Arm 1</h2><span class="label model">model —</span></div>
+        <div class="controls"><label>κ goal [m⁻¹] <input class="curvature" type="text" inputmode="decimal" placeholder="e.g. -1.00"></label>
+          <button class="project">Compute inference</button>
+          <button class="execute">Send to motor</button>
+          <button class="cancel">Cancel motion</button></div>
+        <div class="detail">Enter the desired signed curvature.</div>
       </article>
       <article class="arm" data-arm="arm_2">
-        <div class="arm-head"><h2>Arm 2</h2><span class="label model">modello —</span></div>
-        <canvas width="520" height="600"></canvas>
-        <div class="legend"><span><i class="dot" style="background:var(--live)"></i>attuale</span>
-          <span><i class="dot" style="background:var(--goal)"></i>richiesta</span>
-          <span><i class="dot" style="background:var(--fit)"></i>realizzabile</span></div>
-        <div class="controls"><label>κ goal [m⁻¹] <input class="curvature" type="text" inputmode="decimal" placeholder="es. 1,00"></label>
-          <button class="project">Calcola inferenza</button>
-          <button class="execute">Invia ai motori</button>
-          <button class="cancel">Annulla movimento</button></div>
-        <div class="detail">Inserisci la curvatura firmata desiderata.</div>
+        <div class="arm-head"><h2>Arm 2</h2><span class="label model">model —</span></div>
+        <div class="controls"><label>κ goal [m⁻¹] <input class="curvature" type="text" inputmode="decimal" placeholder="e.g. 1.00"></label>
+          <button class="project">Compute inference</button>
+          <button class="execute">Send to motor</button>
+          <button class="cancel">Cancel motion</button></div>
+        <div class="detail">Enter the desired signed curvature.</div>
       </article>
     </section>
   </main>
   <script>
     const local = {arm_1:{requested:null,drag:-1,ready:false,error:null}, arm_2:{requested:null,drag:-1,ready:false,error:null}};
     let latest = null;
-    const bounds = {xmin:-0.22,xmax:0.22,ymin:0.0,ymax:0.65};
-    const xy = (p,c) => [(p.x-bounds.xmin)/(bounds.xmax-bounds.xmin)*c.width,
-      c.height-(p.y-bounds.ymin)/(bounds.ymax-bounds.ymin)*c.height];
-    const world = (x,y,c) => ({x:bounds.xmin+x/c.width*(bounds.xmax-bounds.xmin),
-      y:bounds.ymin+(c.height-y)/c.height*(bounds.ymax-bounds.ymin),z:0});
-    function chain(ctx,c,points,color,dash=[]){
-      if(!points) return; ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=3;
-      ctx.setLineDash(dash); ctx.beginPath(); const base=xy({x:0,y:0},c); ctx.moveTo(...base);
-      points.forEach(p=>ctx.lineTo(...xy(p,c))); ctx.stroke(); ctx.setLineDash([]);
-      points.forEach((p,i)=>{const v=xy(p,c);ctx.beginPath();ctx.arc(v[0],v[1],8,0,7);
-        ctx.fill();ctx.fillStyle='#071018';ctx.fillText(String(i+1),v[0]-3,v[1]+4);ctx.fillStyle=color;});
+    const currentHistory=[];
+    let lastMotorSequence=null;
+    let cameraBusy=false;
+    let pwmScaleDirty=false;
+    const activeMotionStates=new Set(['starting','moving','settling','reversal_dwell','retrying','setting_home']);
+    function motionActive(){return activeMotionStates.has(latest?.motion?.state);}
+    function cadArm(ctx,points,cx,color){if(!points)return;const scale=510,baseY=68;
+      const screen=[{x:cx,y:baseY},...points.map(p=>({x:cx+p.x*scale,y:baseY+p.y*scale}))];
+      ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#155b43';ctx.lineWidth=13;
+      ctx.beginPath();ctx.moveTo(screen[0].x,screen[0].y);screen.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));ctx.stroke();
+      ctx.strokeStyle=color;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(screen[0].x,screen[0].y);screen.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));ctx.stroke();
+      screen.slice(1).forEach((p,i)=>{const prev=screen[i],next=screen[Math.min(i+2,screen.length-1)];
+        const angle=Math.atan2(next.y-prev.y,next.x-prev.x);ctx.save();ctx.translate(p.x,p.y);ctx.rotate(angle);
+        ctx.fillStyle='#16805a';ctx.strokeStyle=color;ctx.lineWidth=2;ctx.fillRect(-24,-5,48,10);ctx.strokeRect(-24,-5,48,10);ctx.restore();
+        ctx.fillStyle=color;ctx.beginPath();ctx.arc(p.x,p.y,5,0,Math.PI*2);ctx.fill();});}
+    function drawFront(){const c=document.querySelector('#front-view'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);
+      const armX=[c.width*.32,c.width*.68];
+      ctx.fillStyle='#173e5b';ctx.fillRect(90,28,c.width-180,28);ctx.fillStyle='#d88a00';
+      armX.forEach(x=>{ctx.fillRect(x-55,18,110,20);ctx.fillRect(x-34,38,68,18);});
+      ctx.fillStyle='#8aa5b6';ctx.font='13px system-ui';ctx.fillText('frame and motors · front view',20,18);
+      const a1=latest?.arms?.arm_1,a2=latest?.arms?.arm_2;cadArm(ctx,a1?.current?.points,armX[0],'#42d4f4');cadArm(ctx,a2?.current?.points,armX[1],'#42d4f4');
+      if(a1?.feasible?.points)cadArm(ctx,a1.feasible.points,armX[0],'#59e391');if(a2?.feasible?.points)cadArm(ctx,a2.feasible.points,armX[1],'#59e391');
+      ctx.fillStyle='#dceaf2';ctx.fillText('ARM 1',armX[0]-23,82);ctx.fillText('ARM 2',armX[1]-23,82);}
+    function sampleCurrents(m){
+      if(m.sequence==null||m.sequence===lastMotorSequence)return;lastMotorSequence=m.sequence;
+      const values=m.current_a_host||[];currentHistory.push({t:Date.now(),a:Number(values[0]),b:Number(values[1])});
+      const cutoff=Date.now()-30000;while(currentHistory.length&&currentHistory[0].t<cutoff)currentHistory.shift();
+    }
+    function drawCurrentChart(){const c=document.querySelector('#current-chart'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);
+      const pad={l:48,r:14,t:14,b:28},w=c.width-pad.l-pad.r,h=c.height-pad.t-pad.b;
+      const finite=currentHistory.flatMap(p=>[p.a,p.b]).filter(Number.isFinite);
+      const limit=Math.max(1,Math.ceil((finite.length?Math.max(...finite.map(Math.abs)):0)*2)/2);
+      const sy=v=>pad.t+h/2-(v/limit)*h*.46;
+      ctx.font='11px system-ui';ctx.lineWidth=1;ctx.strokeStyle='#294154';ctx.fillStyle='#7f9aaa';
+      [-limit,0,limit].forEach(v=>{const y=sy(v);ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(c.width-pad.r,y);ctx.stroke();ctx.fillText(`${v.toFixed(1)} A`,4,y+4);});
+      ctx.fillText('-30 s',pad.l,c.height-7);ctx.fillText('now',c.width-32,c.height-7);
+      const plot=(key,color)=>{ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();let started=false;
+        const now=Date.now();currentHistory.forEach(p=>{const v=p[key];if(!Number.isFinite(v))return;const x=pad.l+Math.max(0,1-(now-p.t)/30000)*w;
+          if(!started){ctx.moveTo(x,sy(v));started=true;}else ctx.lineTo(x,sy(v));});ctx.stroke();};
+      plot('a','#42d4f4');plot('b','#ffad42');
     }
     function draw(article,arm){
-      const c=article.querySelector('canvas'),ctx=c.getContext('2d'); ctx.clearRect(0,0,c.width,c.height);
-      ctx.strokeStyle='#1d3444';ctx.lineWidth=1;
-      for(let y=0;y<=.6;y+=.1){const a=xy({x:bounds.xmin,y},c),b=xy({x:bounds.xmax,y},c);
-        ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();}
-      const state=latest?.arms?.[arm]; const current=state?.current?.points;
-      const requested=local[arm].requested||state?.requested?.points;
-      chain(ctx,c,current,'#42d4f4');chain(ctx,c,requested,'#ffad42',[7,5]);
-      chain(ctx,c,state?.feasible?.points,'#59e391',[3,4]);
+      const state=latest?.arms?.[arm];
       const model=article.querySelector('.model');
-      if(state?.model?.available){const tag=state.model.approved?'approvato':'candidato';
-        const fit=state.model.converged===false?' · non convergente':'';
+      if(state?.model?.available){const tag=state.model.approved?'approved':'candidate';
+        const fit=state.model.converged===false?' · not converged':'';
         model.textContent=`${tag}${fit} · κ ${state.model.curvature_min.toFixed(3)}…${state.model.curvature_max.toFixed(3)} m⁻¹ · q ${state.model.q_min.toFixed(0)}…${state.model.q_max.toFixed(0)}`;
-      }else model.textContent='modello non caricato';
+        const input=article.querySelector('.curvature');input.title=`Valid range: ${state.model.curvature_min.toFixed(3)}…${state.model.curvature_max.toFixed(3)} m⁻¹`;
+      }else model.textContent='model not loaded';
       article.querySelector('.project').disabled=!state?.model?.available;
-      const moving=latest?.motion?.state==='starting'||latest?.motion?.state==='moving';
-      article.querySelector('.execute').disabled=!latest?.motor_execute_enabled||!local[arm].ready||moving;
+      const moving=motionActive();
+      article.querySelector('.execute').disabled=!latest?.motor_execute_enabled||!latest?.home_calibrated||!local[arm].ready||moving;
       article.querySelector('.cancel').disabled=!moving||latest?.motion?.arm!==arm;
-      if(state?.projection){let text=`κ richiesta=${Number(state.projection.curvature_target??0).toFixed(3)} m⁻¹ · κ prevista=${Number(state.projection.curvature_achieved??0).toFixed(3)} m⁻¹ · q target=${state.projection.q.toFixed(2)}`;
-        if(state.projection.curvature_clamped)text+=` · FUORI RANGE: usare ${state.projection.curvature_min.toFixed(3)}…${state.projection.curvature_max.toFixed(3)}`;
-        if(latest?.motion?.arm===arm)text+=` · movimento ${latest.motion.state} · q=${Number(latest.motion.current_q??0).toFixed(0)}`;
+      if(state?.projection){let text=`requested κ=${Number(state.projection.curvature_target??0).toFixed(3)} m⁻¹ · predicted κ=${Number(state.projection.curvature_achieved??0).toFixed(3)} m⁻¹ · target q=${state.projection.q.toFixed(2)}`;
+        if(state.projection.curvature_clamped)text+=` · OUT OF RANGE: use ${state.projection.curvature_min.toFixed(3)}…${state.projection.curvature_max.toFixed(3)}`;
+        if(latest?.motion?.arm===arm)text+=` · motion ${latest.motion.state.replaceAll('_',' ')} · q=${Number(latest.motion.current_q??0).toFixed(0)}`;
+        if(latest?.motion?.arm==='both'){const q=latest.motion.current_q?.[arm]??latest?.motor?.encoder_counts?.[arm==='arm_1'?0:1]??0;
+          text+=` · motion ${latest.motion.state.replaceAll('_',' ')} · q=${Number(q).toFixed(0)}`;}
         article.querySelector('.detail').textContent=text;}
       if(local[arm].error)article.querySelector('.detail').innerHTML=`<span class="warn">${local[arm].error}</span>`;
     }
     function setTelemetry(s){
-      const m=s.motor||{}; document.querySelector('#enc').textContent=(m.encoder_counts||['—','—']).join(' / ');
-      document.querySelector('#cur').textContent=(m.current_a_host||[]).map(v=>`${Number(v).toFixed(2)} A`).join(' / ')||'—';
-      document.querySelector('#pwm').textContent=(m.applied_commands||['—','—']).join(' / ');
-      const v=s.vision||{};document.querySelector('#vision').textContent=(v.complete_arms||[]).join(', ')||'incompleta';
-      document.querySelector('#health').textContent=`frame ${v.frame??'—'} · ground ${v.reference_frame_locked?'locked':'waiting'} · motori ${s.motor_execute_enabled?'ABILITATI':'disabilitati'} · modo ${s.motion_mode??'—'}`;
+      const m=s.motor||{},enc=m.encoder_counts||[],cur=m.current_a_host||[];
+      document.querySelector('#enc-top-1').textContent=enc[0]??'—';document.querySelector('#enc-top-2').textContent=enc[1]??'—';
+      document.querySelector('#enc-1').textContent=enc[0]??'—';document.querySelector('#enc-2').textContent=enc[1]??'—';
+      document.querySelector('#cur-1').textContent=Number.isFinite(Number(cur[0]))?`${Number(cur[0]).toFixed(2)} A`:'—';
+      document.querySelector('#cur-2').textContent=Number.isFinite(Number(cur[1]))?`${Number(cur[1]).toFixed(2)} A`:'—';
+      const scale=Number(s.pwm_scale_percent||0);document.querySelector('#pwm').textContent=`${(m.applied_commands||['—','—']).join(' / ')} · ${scale===0?'baseline':`${scale>0?'+':''}${scale}%`}`;
+      const v=s.vision||{};document.querySelector('#vision').textContent=(v.complete_arms||[]).join(', ')||'incomplete';
+      document.querySelector('#camera-status').textContent=`Detected IDs: ${(v.detected_ids||[]).join(', ')||'none'} · ${Number(v.processed_fps||0).toFixed(1)} Hz`;
+      document.querySelector('#health').textContent=`frame ${v.frame??'—'} · reference ${v.reference_frame_locked?'locked':'waiting'} · ${s.home_calibrated?'HOME OK':'HOME REQUIRED'} · motors ${s.motor_execute_enabled?'ENABLED':'disabled'} · mode ${s.motion_mode??'—'}`;
+      const moving=motionActive();document.querySelector('#project-both').disabled=moving;
+      document.querySelector('#execute-both').disabled=moving||!local.arm_1.ready||!local.arm_2.ready||!s.motor_execute_enabled||!s.home_calibrated;
+      document.querySelector('#home-both').disabled=moving||!s.motor_execute_enabled||!s.home_calibrated;
+      const telemetryReady=Array.isArray(m.applied_commands)&&m.applied_commands.length===2&&Array.isArray(m.requested_commands)&&m.requested_commands.length===2;
+      const stopped=telemetryReady&&m.applied_commands.every(v=>Number(v)===0)&&m.requested_commands.every(v=>Number(v)===0);
+      document.querySelector('#set-home').disabled=moving||!stopped;
+      document.querySelector('#apply-pwm-scale').disabled=moving||!stopped;
+      if(!pwmScaleDirty)document.querySelector('#pwm-scale').value=String(Number(s.pwm_scale_percent??20));
+      document.querySelector('#stop-all').disabled=!moving;
     }
-    async function update(){try{const r=await fetch('/api/state');latest=await r.json();setTelemetry(latest);
+    async function update(){try{const r=await fetch('/api/state');latest=await r.json();sampleCurrents(latest.motor||{});setTelemetry(latest);drawFront();drawCurrentChart();
       document.querySelectorAll('.arm').forEach(a=>draw(a,a.dataset.arm));}catch(e){document.querySelector('#health').textContent='dashboard offline';}}
+    function refreshCamera(){if(cameraBusy)return;cameraBusy=true;const image=document.querySelector('#camera-view');
+      image.onload=()=>{cameraBusy=false;};image.onerror=()=>{cameraBusy=false;};image.src=`/api/camera.jpg?t=${Date.now()}`;}
     async function project(arm){const a=document.querySelector(`[data-arm="${arm}"]`);
       const raw=a.querySelector('.curvature').value.trim().replace(',','.');const curvature=Number(raw);
-      if(!raw||!Number.isFinite(curvature)){a.querySelector('.detail').innerHTML='<span class="warn">Inserire una curvatura numerica.</span>';return false;}
+      if(!raw||!Number.isFinite(curvature)){a.querySelector('.detail').innerHTML='<span class="warn">Enter a numeric curvature.</span>';return false;}
       try{const r=await fetch('/api/curvature',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({arm,curvature})});const out=await r.json();
         if(!r.ok){local[arm].error=out.error;draw(a,arm);return false;}
         local[arm].error=null;
         latest.arms[arm].feasible={points:out.feasible};latest.arms[arm].projection=out.projection;draw(a,arm);return true;
-      }catch(e){a.querySelector('.detail').innerHTML='<span class="warn">Errore di comunicazione con la dashboard.</span>';return false;}}
+      }catch(e){a.querySelector('.detail').innerHTML='<span class="warn">Dashboard communication error.</span>';return false;}}
     async function execute(arm){const p=latest?.arms?.[arm]?.projection;if(!p)return;
       const current=Number(p.q_current??0),target=Number(p.q);
-      if(!confirm(`${arm}: inviare il motore da q=${current.toFixed(1)} a q=${target.toFixed(1)}?`))return;
+      if(!confirm(`${arm}: move the motor from q=${current.toFixed(1)} to q=${target.toFixed(1)}?`))return;
       const r=await fetch('/api/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({arm})});
       const out=await r.json();if(!r.ok)local[arm].error=out.error;else local[arm].error=null;await update();}
     async function cancel(){await fetch('/api/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});await update();}
-    document.querySelectorAll('.arm').forEach(a=>{const arm=a.dataset.arm,c=a.querySelector('canvas');
+    async function projectBoth(){const results=await Promise.all(['arm_1','arm_2'].map(project));return results.every(Boolean);}
+    async function executeBoth(){if(!local.arm_1.ready||!local.arm_2.ready)return;
+      const targets={arm_1:Math.round(latest.arms.arm_1.projection.q),arm_2:Math.round(latest.arms.arm_2.projection.q)};
+      if(!confirm(`Move both arms to the requested shapes?\nInternal targets: ${targets.arm_1} / ${targets.arm_2}`))return;
+      const r=await fetch('/api/positions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({targets})});
+      const out=await r.json();if(!r.ok)alert(out.error);await update();}
+    async function homeBoth(){if(!confirm('Return both arms to the controlled home position?'))return;
+      const r=await fetch('/api/positions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({targets:{arm_1:0,arm_2:0}})});
+      const out=await r.json();if(!r.ok)alert(out.error);await update();}
+    async function setHome(){if(!confirm('Confirm that both arms are physically at home. The encoders will be zeroed at this position.'))return;
+      const r=await fetch('/api/home',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      const out=await r.json();alert(r.ok?out.message:out.error);local.arm_1.ready=false;local.arm_2.ready=false;await update();}
+    async function applyPwmScale(){const percent=Number(document.querySelector('#pwm-scale').value);
+      const r=await fetch('/api/pwm-scale',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({percent})});
+      const out=await r.json();if(!r.ok)alert(out.error);else{pwmScaleDirty=false;document.querySelector('#health').textContent=`${out.message} · motors stopped`;}await update();}
+    function presetDemo(){const values={arm_1:'-0.980',arm_2:'0.921'};
+      Object.entries(values).forEach(([arm,value])=>{document.querySelector(`[data-arm="${arm}"] .curvature`).value=value;local[arm].ready=false;local[arm].error=null;});
+      document.querySelectorAll('.arm').forEach(a=>draw(a,a.dataset.arm));}
+    document.querySelectorAll('.arm').forEach(a=>{const arm=a.dataset.arm;
       a.querySelector('.project').onclick=async()=>{local[arm].ready=await project(arm);draw(a,arm);};
       a.querySelector('.execute').onclick=()=>execute(arm);a.querySelector('.cancel').onclick=cancel;
       a.querySelector('.curvature').oninput=()=>{local[arm].ready=false;local[arm].error=null;draw(a,arm);};});
-    setInterval(update,200);update();
+    document.querySelector('#preset-demo').onclick=presetDemo;
+    document.querySelector('#project-both').onclick=async()=>{await projectBoth();};
+    document.querySelector('#execute-both').onclick=executeBoth;
+    document.querySelector('#home-both').onclick=homeBoth;
+    document.querySelector('#set-home').onclick=setHome;
+    document.querySelector('#pwm-scale').onchange=()=>{pwmScaleDirty=true;};
+    document.querySelector('#apply-pwm-scale').onclick=applyPwmScale;
+    document.querySelector('#stop-all').onclick=cancel;
+    presetDemo();
+    setInterval(update,200);setInterval(refreshCamera,200);update();refreshCamera();
   </script>
 </body>
 </html>

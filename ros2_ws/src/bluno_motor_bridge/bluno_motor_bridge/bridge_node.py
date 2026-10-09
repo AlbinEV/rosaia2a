@@ -8,6 +8,7 @@ from rclpy.node import Node
 import serial
 from serial import SerialException
 from std_msgs.msg import Float32MultiArray, Int16MultiArray, Int64MultiArray, String
+from std_srvs.srv import Trigger
 
 from .protocol import (
     adc_to_current_a,
@@ -15,6 +16,7 @@ from .protocol import (
     encode_command,
     encode_step_axis,
     encode_stop,
+    encode_zero_encoders,
     parse_state,
     ProtocolError,
 )
@@ -104,6 +106,7 @@ class BlunoMotorBridge(Node):
         self._sequence = 0
         self._commands = (0, 0)
         self._last_written_commands = (0, 0)
+        self._last_applied_commands = (0, 0)
         self._last_command_time = None
         self._last_connect_attempt = -float('inf')
         self._last_state_time = None
@@ -122,6 +125,9 @@ class BlunoMotorBridge(Node):
         )
         self._step_sub = self.create_subscription(
             Int16MultiArray, 'motor_step_command', self._on_step_command, 10
+        )
+        self._zero_service = self.create_service(
+            Trigger, 'zero_encoders', self._on_zero_encoders
         )
         self._encoder_pub = self.create_publisher(
             Int64MultiArray, 'encoder_counts', 10
@@ -251,6 +257,41 @@ class BlunoMotorBridge(Node):
             f'sent bounded step axis={axis} counts={signed_counts} pwm={pwm}'
         )
 
+    def _on_zero_encoders(self, request, response):
+        """Zero both encoders only while firmware outputs are stopped."""
+        del request
+        if self._serial is None or not self._firmware_ready:
+            response.success = False
+            response.message = 'serial link or firmware is not ready'
+            return response
+        if (
+            self._step_active
+            or any(self._commands)
+            or any(self._last_written_commands)
+            or any(self._last_applied_commands)
+        ):
+            response.success = False
+            response.message = 'motor output or bounded step is active'
+            return response
+        try:
+            self._serial.write(encode_stop())
+            self._serial.write(encode_zero_encoders())
+            self._serial.flush()
+        except (OSError, SerialException) as exc:
+            self._disconnect(str(exc))
+            response.success = False
+            response.message = f'serial write failed: {exc}'
+            return response
+        self._commands = (0, 0)
+        self._last_written_commands = (0, 0)
+        self._last_applied_commands = (0, 0)
+        self._last_command_time = None
+        self._stop_sent = True
+        response.success = True
+        response.message = 'ZERO_ENC sent; verify encoder telemetry is [0, 0]'
+        self.get_logger().info('encoder zero requested at mechanical home')
+        return response
+
     def _connect_if_due(self, now: float) -> None:
         if self._serial is not None or not self._port:
             return
@@ -266,6 +307,7 @@ class BlunoMotorBridge(Node):
             )
             self._serial.reset_input_buffer()
             self._last_written_commands = (0, 0)
+            self._last_applied_commands = (0, 0)
             self._rx_buffer.clear()
             self._firmware_ready = False
             self._effective_current_zero = list(self._current_zero_adc)
@@ -290,6 +332,7 @@ class BlunoMotorBridge(Node):
         self._firmware_ready = False
         self._commands = (0, 0)
         self._last_written_commands = (0, 0)
+        self._last_applied_commands = (0, 0)
         self._last_command_time = None
         self._rx_buffer.clear()
         self._stop_sent = False
@@ -379,6 +422,8 @@ class BlunoMotorBridge(Node):
 
             self._last_state_time = now
             self._firmware_ready = True
+            if packet.applied_commands is not None:
+                self._last_applied_commands = packet.applied_commands
             if (
                 self._auto_current_zero
                 and self._current_zero_count < self._auto_current_zero_samples

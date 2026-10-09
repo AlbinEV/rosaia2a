@@ -47,37 +47,89 @@
 <header>
   <span class="tag">ROS 2 Jazzy · Bluno · RealSense RGB-D ArUco</span>
   <h1>ROSAIA LEGO</h1>
-  <p>Guida operativa per bring-up, calibrazione, acquisizione dati, debugging,
-    visualizzazione e futura identificazione del Jacobiano dei due bracci deformabili.</p>
+  <p>Manuale operativo autosufficiente per bring-up, calibrazione automatica,
+    acquisizione RGB-D/encoder/corrente, training MLP, inferenza della forma e
+    dimostrazione dei due bracci deformabili mono-attuatore.</p>
 </header>
 <nav>
-  <a href="#stato">Stato</a><a href="#setup">Setup</a><a href="#avvio">Avvio</a>
+  <a href="#concetto">Concetto</a><a href="#stato">Stato</a><a href="#setup">Setup</a><a href="#workflow">Workflow</a><a href="#avvio">Manuale</a>
   <a href="#calibrazione">Calibrazione</a><a href="#recording">Recording</a>
   <a href="#debug">Debug</a><a href="#training">Training</a><a href="#stop">Stop</a>
 </nav>
 <main>
+  <section id="concetto">
+    <h2>Concetto del progetto</h2>
+    <p>Ogni braccio è azionato da un solo motore primario. L’encoder misura la
+      coordinata attuata <code>q</code>; la RealSense ricostruisce in 3D i tre
+      marker mobili del braccio rispetto ai marker rigidi di base. Un modello
+      forward MLP apprende la mappa monodimensionale
+      <code>x̂=fθ(q)</code>, dove <code>x</code> contiene le coordinate 3D dei
+      tre marker. La derivata analitica fornisce il Jacobiano
+      <code>Ĵ(q)=∂fθ/∂q</code>.</p>
+    <p>Nella demo l’operatore imposta una deformata desiderata nella dashboard.
+      Il sistema la proietta sulla varietà di forme raggiungibili appresa dalla
+      MLP, stima il corrispondente target encoder e, solo dopo un comando
+      esplicito di esecuzione, muove il motore fino al target usando il feedback
+      encoder mentre la visione misura la forma ottenuta. Corrente, PWM applicato
+      e stato firmware restano disponibili per supervisione e analisi. Il loop
+      visuale chiuso sulla forma è lo stadio successivo; la demo corrente chiude
+      il moto su <code>q</code> e verifica <code>x</code> con la camera.</p>
+    <div class="grid">
+      <div class="card"><h3>Misure</h3><p>RGB-D ArUco, encoder incrementali,
+        ADC dei due sensori di corrente e stato del ponte H.</p></div>
+      <div class="card"><h3>Apprendimento</h3><p>Una MLP separata per braccio,
+        addestrata su sweep quasi-statici e validata su traiettorie distinte.</p></div>
+      <div class="card"><h3>Inferenza</h3><p>Proiezione della forma richiesta
+        sulla curva raggiungibile e calcolo del target <code>q</code>.</p></div>
+      <div class="card"><h3>Attuazione</h3><p>Movimento encoder-bounded con
+        profili PWM identificati sperimentalmente e ritorno in home.</p></div>
+    </div>
+  </section>
+
   <section id="stato">
     <h2>Stato dell’implementazione</h2>
     <div class="grid">
       <div class="card"><h3 class="ok">Pronto</h3><p>Firmware a due assi, watchdog,
-        encoder D2–D3 e D11–D12, telemetria ADC, bridge seriale ROS.</p></div>
-      <div class="card"><h3 class="ok">Pronto</h3><p>Detection ArUco RGB-D,
-        deproiezione metrica 3D e stato filtrato dei tre marker per braccio.</p></div>
+        encoder D2–D3 e D5–D6, telemetria ADC e bridge seriale ROS a 100 Hz.</p></div>
+      <div class="card"><h3 class="ok">Pronto</h3><p>Tracker C++ ArUco RGB-D a
+        25–30 Hz, deproiezione metrica 3D e filtro di Kalman per i marker.</p></div>
       <div class="card"><h3 class="ok">Pronto</h3><p>Recorder sincronizzato CSV:
         stream motore completo più campioni visuali.</p></div>
-      <div class="card"><h3 class="pending">Da calibrare</h3><p>Home/range dei due assi,
-        sensori di corrente, velocità/PWM, mapping fisico definitivo dei marker e timing.</p></div>
-      <div class="card"><h3 class="ok">Pronto offline</h3><p>Profili gradino/Fourier,
-        training MLP, export NPZ e publisher del Jacobiano analitico.</p></div>
-      <div class="card"><h3 class="pending">Da implementare</h3><p>Allineamento temporale
-        definitivo, report dataset, replay e loop di velocità encoder.</p></div>
-      <div class="card"><h3 class="pending">Solo riferimento</h3><p>Il controller visuale
-        produce <code>q̇_ref</code>; non comanda ancora PWM.</p></div>
+      <div class="card"><h3 class="pending">Da ripetere se cambia il setup</h3><p>
+        Home, riferimento camera e MLP dipendono dalla posa della camera e dalla
+        configurazione meccanica.</p></div>
+      <div class="card"><h3 class="ok">Pronto</h3><p>Audit dataset, training MLP,
+        export NPZ, Jacobiano analitico e hot-reload dei modelli.</p></div>
+      <div class="card"><h3 class="ok">Pronto</h3><p>Dashboard multimodale con
+        forma corrente, forma richiesta, proiezione raggiungibile e moto ibrido.</p></div>
+      <div class="card"><h3 class="pending">Validazione continua</h3><p>Accuratezza,
+        isteresi, ripetibilità e limiti di corrente vanno rivalutati dopo ogni
+        modifica meccanica o elettrica.</p></div>
     </div>
   </section>
 
   <section id="setup">
     <h2>Setup e build</h2>
+    <h3>Configurazione hardware corrente</h3>
+    <table>
+      <thead><tr><th>Elemento</th><th>Configurazione</th></tr></thead>
+      <tbody>
+        <tr><td>Controllore</td><td>Bluno/ATmega328P, seriale 115200 baud.</td></tr>
+        <tr><td>Ponte H</td><td>Makerfabs; asse 0 / arm 1 su M2, asse 1 / arm 2 su M1.</td></tr>
+        <tr><td>Encoder arm 1</td><td>Canali digitali D2–D3.</td></tr>
+        <tr><td>Encoder arm 2</td><td>Canali digitali D5–D6.</td></tr>
+        <tr><td>Corrente</td><td>Due ingressi ADC; calibrazione nominale ACS712-30A,
+          sensibilità 66 mV/A, offset host aggiornato automaticamente a uscite ferme.</td></tr>
+        <tr><td>Alimentazione dimostrativa</td><td>5.6 V; limite dell’alimentatore
+          condiviso fra i due motori impostato dall’operatore.</td></tr>
+        <tr><td>Camera</td><td>Intel RealSense D435, seriale 152122077644,
+          RGB-D 1280×720 @ 30 Hz.</td></tr>
+        <tr><td>ArUco</td><td>DICT_4X4_50, lato 30 mm. Base arm 1: ID 0;
+          mobili 2–3–4. Base arm 2: ID 1; mobili 5–6–7.</td></tr>
+        <tr><td>Range firmware</td><td><code>0 ≤ q ≤ 300</code> count per asse;
+          il workflow automatico usa conservativamente <code>0…200</code>.</td></tr>
+      </tbody>
+    </table>
     <p>Eseguire dalla root della repository. Lo script sorgenta automaticamente ROS e workspace.</p>
     <pre><code>cd /home/abajrami-iit.local/Desktop/rosaia-lego
 scripts/rosaia.sh build
@@ -92,17 +144,254 @@ scripts/rosaia.sh test</code></pre>
 ls -l /dev/serial/by-id/</code></pre>
     <div class="callout">Un solo processo deve possedere la seriale Bluno. Non avviare
       contemporaneamente bridge ROS e script Python diretti su <code>/dev/ttyACM0</code>.</div>
+    <h3>Quando una calibrazione non è più valida</h3>
+    <ul>
+      <li>camera spostata, ruotata o con intrinseci/profilo RGB-D differenti;</li>
+      <li>marker, base, filo, puleggia o pretensionamento modificati;</li>
+      <li>home meccanica o accoppiamento encoder–motore modificati;</li>
+      <li>tensione, rapporto di trasmissione o struttura del braccio modificati.</li>
+    </ul>
+    <p>I marker di base vengono congelati dopo 30 frame validi e possono poi
+      sparire temporaneamente. Devono però essere entrambi visibili quando si
+      avvia o si resetta il riferimento.</p>
+  </section>
+
+  <section id="workflow">
+    <h2>Workflow automatico: calibrazione e demo</h2>
+    <p>Il workflow avvia i componenti mancanti, verifica telemetria e visione,
+      azzera gli encoder nella home, ricostruisce il riferimento della camera,
+      acquisisce train/validation sui due bracci, controlla i dataset, allena
+      due MLP e carica i modelli nella dashboard.</p>
+    <div class="callout">Dopo aver spostato la camera serve una nuova calibrazione.
+      Durante acquisizione, training e demo la camera, le basi e i marker ArUco
+      devono restare rigidamente fissati. Prima del reset del riferimento devono
+      essere visibili entrambi i marker di base.</div>
+    <h3>Demo definitiva · avvio con un solo comando</h3>
+    <p>Con Bluno e RealSense collegate, bracci nella home e alimentazione motori
+      a 5.6 V, eseguire:</p>
+    <pre><code>cd /home/abajrami-iit.local/Desktop/rosaia-lego
+scripts/rosaia.sh workflow demo</code></pre>
+    <p>Il comando avvia automaticamente bridge, controllore, tracker C++ e
+      dashboard con il moto abilitato; carica i due modelli 5.6 V, esegue il
+      preflight e apre <code>http://127.0.0.1:8765</code>. Se trova uno stack
+      parziale si arresta esplicitamente: eseguire prima
+      <code>scripts/rosaia.sh workflow stop</code> e rilanciare.</p>
+    <ol>
+      <li>Controllare in alto <code>ground locked</code>, visione
+        <code>arm_1, arm_2</code> e PWM <code>0 / 0</code>. Posizionare
+        fisicamente entrambi i bracci nella home.</li>
+      <li>Usare il riquadro <strong>RealSense · detection ArUco live</strong>
+        per regolare la camera: i contorni e gli ID 0–7 devono essere visibili.
+        La riga sotto l’immagine mostra gli ID rilevati e la frequenza del
+        tracker senza avviare un secondo processo RealSense.</li>
+      <li>Premere <strong>Imposta posizione corrente come home</strong> e
+        confermare. La dashboard accetta il comando solo a moto fermo e attende
+        la telemetria encoder <code>[0,0]</code>. Finché non compare
+        <code>HOME OK</code>, tutti i pulsanti di movimento restano disabilitati.</li>
+      <li>Premere <strong>Carica deformata demo</strong>: imposta soltanto κ
+        (<code>-0.980</code> e <code>0.921 m⁻¹</code>), senza muovere.</li>
+      <li>Premere <strong>Calcola entrambe</strong> e verificare la deformata
+        verde e i target interni stimati dalla MLP.</li>
+      <li>Se necessario, selezionare l’<strong>Intensità PWM</strong> globale
+        (<code>−20%</code>, <code>−10%</code>, standard, <code>+10%</code> o
+        <code>+20%</code>) e premere <strong>Applica PWM</strong>. La demo parte
+        per default a <code>+20%</code>; la modifica è accettata soltanto a
+        motori fermi.</li>
+      <li>Premere <strong>Muovi entrambi</strong> e confermare. Il controllo
+        encoder rallenta vicino al target, attende l’assestamento e corregge un
+        eventuale superamento.</li>
+      <li>Premere <strong>Home controllata</strong> per il ritorno dei due assi.
+        <strong>STOP</strong> annulla in qualunque momento e pubblica velocità e
+        PWM nulli.</li>
+    </ol>
+    <div class="callout">La UI espone come comando di forma solo κ.
+      <strong>Imposta posizione corrente come home</strong> definisce lo zero
+      encoder nella configurazione fisica corrente; <strong>Home
+      controllata</strong> muove invece verso quello zero. Il riferimento
+      encoder è necessario perché, soprattutto su arm 1, la curvatura è quasi
+      costante nel primo tratto e non identifica in modo univoco la home.</div>
+    <p>Un riavvio o reset della Bluno porta numericamente gli encoder a zero ma
+      non dimostra la home meccanica. Per questo ogni avvio della dashboard parte
+      con <code>HOME DA IMPOSTARE</code>; anche un reset MCU rilevato durante
+      l’esecuzione invalida automaticamente la home.</p>
+    <p>La percentuale PWM moltiplica l’uscita completa del regolatore di
+      velocità, incluse compensazione di attrito e breakaway, prima della
+      saturazione configurata a ±200 PWM (limite firmware ±255) e dello
+      slew-rate. Non modifica κ, target encoder,
+      guadagni del loop di posizione o limiti firmware. La base originale
+      corrisponde al 100% dei valori delle mappe in
+      <code>velocity_controller.yaml</code>; il default della demo applica un
+      moltiplicatore <code>1.20</code>.</p>
+    <h3>Procedura rapida completa</h3>
+    <pre><code># 1. Bring-up completo; abilita nella dashboard l'esecuzione esplicita del moto
+scripts/rosaia.sh workflow start --enable-motion
+
+# 2. Anteprima della sequenza, senza comandi o scritture
+scripts/rosaia.sh workflow calibrate --label demo_5v6 --dry-run --yes
+
+# 3. Bracci nella home meccanica, alimentazione 5.6 V pronta: pipeline completa
+scripts/rosaia.sh workflow calibrate --label demo_5v6
+
+# 4. Dimostrazione successiva: modelli più recenti e target intermedi
+scripts/rosaia.sh workflow demo
+
+# 5. Stop motori e processi avviati dal workflow
+scripts/rosaia.sh workflow stop</code></pre>
+    <h3>Precondizioni della calibrazione</h3>
+    <ol>
+      <li>Portare fisicamente entrambi i bracci nella home meccanica. Uno zero
+        encoder dopo il reset USB non dimostra che il braccio sia in home.</li>
+      <li>Fissare la camera e inquadrare ID 0–7. I due marker base devono essere
+        leggibili durante l’acquisizione iniziale del riferimento.</li>
+      <li>Accendere l’alimentazione motori a 5.6 V e impostare il limite di
+        corrente concordato sul banco.</li>
+      <li>Verificare che fili, pulegge e accoppiamenti siano corretti e che il
+        range <code>0…200</code> sia meccanicamente libero.</li>
+      <li>Eseguire il dry-run. Non produce file, non resetta riferimenti e non
+        invia comandi ai motori.</li>
+    </ol>
+    <h3>Cosa esegue <code>calibrate</code></h3>
+    <table>
+      <thead><tr><th>Fase</th><th>Azione automatica</th><th>Criterio</th></tr></thead>
+      <tbody>
+        <tr><td>Preflight</td><td>Controlla telemetria, output fermi, flag firmware,
+          tracker C++ e forme complete di entrambi i bracci.</td><td>Encoder presenti,
+          PWM zero, soli flag attesi, arm 1 e arm 2 completi.</td></tr>
+        <tr><td>Zero</td><td>Invia <code>STOP</code>, <code>ZERO_ENC</code> e resetta
+          il riferimento robot-base della camera.</td><td>Encoder <code>[0,0]</code>
+          e reference frame nuovamente locked.</td></tr>
+        <tr><td>Train arm 1</td><td>Sweep quasi-statico 0→200→0, registrando visione,
+          encoder, PWM, ADC e corrente.</td><td>Range e numero minimo di campioni.</td></tr>
+        <tr><td>Validation arm 1</td><td>Secondo sweep con punti diversi e ritorno home.</td><td>Sessione mai usata nel fit.</td></tr>
+        <tr><td>Train/validation arm 2</td><td>Ripete le due traiettorie sull’asse 1.</td><td>Stessi audit indipendenti.</td></tr>
+        <tr><td>Training</td><td>Allena una MLP 32×32 per braccio con campionamento
+          bilanciato lungo <code>q</code>.</td><td>Metriche e metadata salvati.</td></tr>
+        <tr><td>Deploy locale</td><td>Hot-reload atomico dei due modelli nella dashboard
+          e preparazione di un target di curvatura intermedio.</td><td>Entrambi i modelli
+          caricati oppure l’intero passo fallisce.</td></tr>
+      </tbody>
+    </table>
+    <h3>Parametri modificabili</h3>
+    <pre><code># Range/punti personalizzati, acquisizione più lunga per ogni punto
+scripts/rosaia.sh workflow calibrate \
+  --label camera_pose_B_5v6 \
+  --train-points 0,20,40,60,80,100,120,140,160,180,200 \
+  --validation-points 0,25,50,75,100,125,150,175,200 \
+  --dwell 0.8
+
+# Ambiente headless: non aprire automaticamente il browser
+scripts/rosaia.sh workflow calibrate --label camera_pose_B_5v6 --no-open
+scripts/rosaia.sh workflow demo --no-open
+
+# Elenco sempre aggiornato degli argomenti
+scripts/rosaia.sh workflow calibrate --help</code></pre>
+    <ul>
+      <li><code>--label</code>: nome riproducibile di sessioni, report e modelli;
+        se omesso viene usato un timestamp.</li>
+      <li><code>--train-points</code>: setpoint encoder del training.</li>
+      <li><code>--validation-points</code>: traiettoria held-out, contenuta nel
+        range del training.</li>
+      <li><code>--dwell</code>: secondi di stabilizzazione/acquisizione per punto.</li>
+      <li><code>--yes</code>: salta soltanto la conferma testuale <code>HOME</code>;
+        non disabilita preflight, limiti o watchdog.</li>
+      <li><code>--dry-run</code>: stampa la pipeline senza eseguirla.</li>
+      <li><code>--no-open</code>: non apre il browser al termine.</li>
+    </ul>
+    <h3>Output e tracciabilità</h3>
+    <pre><code>data/
+├── sessions/
+│   ├── &lt;label&gt;_arm_1_train/
+│   ├── &lt;label&gt;_arm_1_validation/
+│   ├── &lt;label&gt;_arm_2_train/
+│   └── &lt;label&gt;_arm_2_validation/
+├── models/
+│   ├── &lt;label&gt;_arm1_mlp/
+│   └── &lt;label&gt;_arm2_mlp/
+└── workflows/
+    ├── latest.json
+    └── &lt;label&gt;/
+        ├── manifest.json
+        ├── logs/
+        └── reports/</code></pre>
+    <p><code>latest.json</code> collega le quattro sessioni ai due modelli e viene
+      usato da <code>workflow demo</code>. Dataset e modelli generati restano
+      locali per default: si versionano soltanto gli artefatti deliberatamente
+      promossi.</p>
+    <h3>Risultato atteso della demo</h3>
+    <ol>
+      <li>Aprire <code>http://127.0.0.1:8765</code>.</li>
+      <li>Confrontare in tempo reale forma misurata, forma desiderata e proiezione
+        raggiungibile della MLP.</li>
+      <li>Impostare la deformata o la curvatura desiderata.</li>
+      <li>Controllare target encoder, clamp, errore di proiezione e telemetria.</li>
+      <li>Premere il comando di esecuzione per il singolo braccio. L’inferenza da
+        sola non muove i motori.</li>
+      <li>Verificare convergenza visuale/encoder e ripetere con l’altro braccio.</li>
+    </ol>
+    <h3>Controllo di posizione usato nella demo</h3>
+    <p>Il moto usa una cascata a due loop. Il loop esterno trasforma l’errore di
+      posizione <code>e=q*−q</code> in un riferimento di velocità proporzionale,
+      limitato sia in velocità sia in accelerazione. Il loop interno PI segue
+      tale velocità e compensa breakaway/attrito con una mappa dipendente da
+      posizione e verso. In prossimità del target il riferimento rallenta; una
+      volta dentro la tolleranza il comando va a zero e il sistema attende
+      l’assestamento. Se l’inerzia porta oltre il target, il controller mantiene
+      zero per un dwell e poi corregge nel verso opposto.</p>
+    <pre><code># Test piccolo: target q=20 e ritorno automatico a q=0
+scripts/rosaia.sh position-test --arm arm_1 --target 20 \
+  --label arm1_q20_controlled
+
+# Stesso test sul secondo braccio
+scripts/rosaia.sh position-test --arm arm_2 --target 20 \
+  --label arm2_q20_controlled
+
+# Movimento coordinato delle due tip e ritorno automatico in home
+scripts/rosaia.sh dual-position-test \
+  --arm-1-target 10 --arm-2-target 10 \
+  --label tips_together_q10</code></pre>
+    <p>Il CSV prodotto in <code>data/control_tests/</code> contiene fase, tempo,
+      target, posizione, errore, riferimento di velocità, numero di inversioni,
+      PWM, corrente e flag. Il test ritorna in home per default; usare
+      <code>--no-return-home</code> soltanto quando è intenzionale.</p>
+    <table>
+      <thead><tr><th>Parametro</th><th>Valore iniziale</th><th>Effetto</th></tr></thead>
+      <tbody>
+        <tr><td><code>position_proportional_gain</code></td><td>0.5</td><td>
+          Pendenza velocità/errore; più alto significa approccio più rapido.</td></tr>
+        <tr><td><code>position_maximum_velocity</code></td><td>20 count/s</td><td>
+          Velocità massima del moto.</td></tr>
+        <tr><td><code>position_maximum_acceleration</code></td><td>12 count/s²</td><td>
+          Limita la pendenza del riferimento e quindi l’impulsività.</td></tr>
+        <tr><td><code>target_tolerance_counts</code></td><td>4 count</td><td>
+          Banda di posizione considerata raggiunta, tarata sul rilassamento del filo.</td></tr>
+        <tr><td><code>position_settle_s</code></td><td>0.5 s</td><td>
+          Permanenza stabile richiesta prima di dichiarare completato il moto.</td></tr>
+        <tr><td><code>position_reverse_dwell_s</code></td><td>0.35 s</td><td>
+          Stop prima della correzione dopo un overshoot.</td></tr>
+        <tr><td><code>maximum_pwm_rate</code></td><td>180 PWM/s</td><td>
+          Slew-rate del comando elettrico nel loop di velocità.</td></tr>
+      </tbody>
+    </table>
+    <p>I parametri del loop esterno sono in
+      <code>ros2_ws/src/rosaia_dashboard/config/dashboard.yaml</code>; PI,
+      breakaway, attrito e slew-rate PWM sono in
+      <code>ros2_ws/src/bluno_motor_bridge/config/velocity_controller.yaml</code>.
+      Dopo una modifica eseguire build e riavviare lo stack.</p>
   </section>
 
   <section id="avvio">
-    <h2>Avvio per terminali</h2>
+    <h2>Avvio manuale per terminali</h2>
+    <p>Usare questa modalità per sviluppo e diagnosi. Per la dimostrazione è
+      preferibile <code>workflow start</code>, che avvia soltanto i componenti
+      mancanti e conserva i log sotto <code>data/logs/</code>.</p>
     <table>
       <thead><tr><th>Terminale</th><th>Comando</th><th>Funzione</th></tr></thead>
       <tbody>
         <tr><td>T1</td><td><code>scripts/rosaia.sh bridge</code></td><td>Seriale, encoder, ADC e comandi motore.</td></tr>
-        <tr><td>T2</td><td><code>scripts/rosaia.sh vision</code></td><td>Camera e detection dei marker.</td></tr>
-        <tr><td>T3</td><td><code>scripts/rosaia.sh recorder calibrazione_01</code></td><td>Dataset CSV; avviare prima del moto.</td></tr>
-        <tr><td>T4</td><td><code>scripts/rosaia.sh view</code></td><td>Immagine annotata, se rqt_image_view è installato.</td></tr>
+        <tr><td>T2</td><td><code>scripts/rosaia.sh velocity-controller</code></td><td>PI encoder-velocity, attrito e slew-rate PWM.</td></tr>
+        <tr><td>T3</td><td><code>scripts/rosaia.sh vision</code></td><td>Camera e detection dei marker.</td></tr>
+        <tr><td>T4</td><td><code>scripts/rosaia.sh recorder calibrazione_01</code></td><td>Dataset CSV; avviare prima del moto.</td></tr>
+        <tr><td>T5</td><td><code>scripts/rosaia.sh view</code></td><td>Immagine annotata, se rqt_image_view è installato.</td></tr>
       </tbody>
     </table>
     <p>Per la preview RGB diretta, senza ROS:</p>
@@ -112,7 +401,7 @@ ls -l /dev/serial/by-id/</code></pre>
   </section>
 
   <section id="calibrazione">
-    <h2>Sequenza di calibrazione prima del training</h2>
+    <h2>Calibrazioni e verifiche manuali</h2>
     <ol>
       <li><strong>Visione:</strong> confermare ID base/mobili e ordine fisico; misurare rumore
         a bracci fermi, detection rate e zona di lavoro visibile.</li>
@@ -136,9 +425,15 @@ ros2 topic hz /arm_2/aruco_state
 ros2 topic echo /arm_1/aruco_points_3d_raw --once
 ros2 topic echo /bluno/status
 ros2 topic echo /aruco/status</code></pre>
-    <h3>Comando zero e comando manuale</h3>
-    <pre><code># Zero su entrambi gli assi
+    <h3>Stop, zero encoder e reset della camera</h3>
+    <pre><code># Arresta entrambi i canali senza modificare i conteggi
 scripts/rosaia.sh stop
+
+# Usare esclusivamente nella home meccanica, con output fermi
+ros2 service call /zero_encoders std_srvs/srv/Trigger '{}'
+
+# Ricostruisce il frame robot-base: rendere visibili ID 0 e 1
+ros2 service call /aruco/reset_reference std_srvs/srv/Trigger '{}'
 
 # Esempio di pubblicazione continua; sostituire i valori solo nel test previsto
 ros2 topic pub --rate 20 /motor_command std_msgs/msg/Int16MultiArray \
@@ -194,6 +489,34 @@ ros2 node info /bluno_motor_bridge</code></pre></div>
     <p>I flag firmware sono bitmask: timeout <code>1</code>, comando malformato
       <code>2</code>, motion lock <code>8</code>, scala corrente ignota <code>16</code>,
       overflow RX <code>32</code>, limite posizione <code>64</code>.</p>
+    <h3>Troubleshooting del workflow</h3>
+    <table>
+      <thead><tr><th>Messaggio/sintomo</th><th>Verifica</th><th>Azione</th></tr></thead>
+      <tbody>
+        <tr><td><code>dashboard unavailable</code></td><td><code>ros2 node list</code>
+          e log dashboard.</td><td>Rilanciare <code>workflow start --enable-motion</code>.</td></tr>
+        <tr><td><code>motor telemetry unavailable</code></td><td>Seriale Bluno,
+          alimentazione logica e <code>/bluno/status</code>.</td><td>Eliminare eventuali
+          processi concorrenti sulla seriale e riavviare il bridge.</td></tr>
+        <tr><td><code>both complete visual arm states are required</code></td><td>ID rilevati
+          e profondità valida in <code>/aruco/status</code>.</td><td>Correggere luce,
+          occlusioni, distanza o posa camera.</td></tr>
+        <tr><td>Reference frame non locked</td><td>Visibilità e profondità di ID 0 e 1.</td>
+          <td>Inquadrare entrambe le basi e ripetere il reset.</td></tr>
+        <tr><td>Zero encoder rifiutato</td><td>PWM richiesto/applicato e bounded step.</td>
+          <td>Inviare <code>scripts/rosaia.sh stop</code>, attendere output zero e
+          ripetere soltanto dalla home.</td></tr>
+        <tr><td>Sweep fermo o timeout</td><td>Alimentazione 5.6 V, accoppiamento,
+          segno encoder, PWM e flag posizione.</td><td>Fermare il workflow e diagnosticare
+          manualmente prima di cambiare il range.</td></tr>
+        <tr><td>Audit dataset fallito</td><td>Numero righe, span di <code>q</code>,
+          marker mancanti e timestamp.</td><td>Non allenare: correggere la causa e
+          ripetere quella sessione.</td></tr>
+        <tr><td>Forma buona ma target errato</td><td>Modello caricato, posa camera,
+          home e verso di <code>q</code>.</td><td>Ripetere la calibrazione dopo ogni
+          variazione del setup; non riusare modelli di un frame precedente.</td></tr>
+      </tbody>
+    </table>
   </section>
 
   <section id="training">
@@ -231,7 +554,7 @@ scripts/rosaia.sh excitation --type fourier --axis 0 \
   --validation-session data/sessions/arm1_validation_01 \
   --camera-to-motor-offset-ms 0.0 \
   --hidden 32,32 \
-  --output models/calibration_01/arm_1</code></pre>
+  --output data/models/calibration_01_arm_1</code></pre>
     <p>Il modello salva <code>model.npz</code> e <code>metadata.json</code>. La validazione
       usa sessioni complete mai viste nel training.</p>
     <h3>Pubblicazione del Jacobiano</h3>
@@ -240,29 +563,39 @@ scripts/rosaia.sh jacobian
 ros2 topic echo /jacobian_model/status
 ros2 topic echo /arm_1/jacobian</code></pre>
     <p>Specifica completa: <a style="color:var(--blue)" href="TRAINING_PIPELINE.md">TRAINING_PIPELINE.md</a>.</p>
-    <h3>Dashboard e proiezione della forma desiderata</h3>
+    <h3>Dashboard, inferenza ed esecuzione</h3>
     <pre><code># Telemetria e deformate correnti, senza modello e senza attuazione
 scripts/rosaia.sh dashboard
 
-# Preview di inferenza con due modelli candidati: pubblicazione goal ancora OFF
+# Inferenza con due modelli e abilitazione dell'esecuzione esplicita
 scripts/rosaia.sh dashboard \
   arm_1_model:=$PWD/data/models/arm1_candidate \
-  arm_2_model:=$PWD/data/models/arm2_candidate</code></pre>
+  arm_2_model:=$PWD/data/models/arm2_candidate \
+  enable_motor_execute:=true</code></pre>
     <p>Aprire <code>http://127.0.0.1:8765</code>. I marker arancioni definiscono la
       deformata richiesta; il profilo verde è la sua proiezione sulla varietà
-      monodimensionale appresa <code>x=f(q)</code>. L’abilitazione
-      <code>enable_goal_publish:=true</code> va usata soltanto dopo promozione dei
-      modelli e validazione offline del controllore.</p>
+      monodimensionale appresa <code>x=f(q)</code>. L’opzione
+      <code>enable_motor_execute:=true</code> rende disponibile l’esecuzione, ma
+      nessun moto parte al caricamento della pagina o durante la sola inferenza:
+      serve l’azione esplicita dell’operatore. La dashboard usa un tratto continuo
+      per avvicinarsi al target e bounded step firmware vicino al setpoint.</p>
   </section>
 
   <section id="stop">
     <h2>Arresto</h2>
-    <pre><code>scripts/rosaia.sh stop</code></pre>
-    <p>Quindi interrompere recorder, detector e bridge con <kbd>Ctrl</kbd>+<kbd>C</kbd>.
-      Il comando host non sostituisce il watchdog firmware né il sezionamento dell’alimentazione.</p>
+    <pre><code># Solo comando PWM zero; lascia i nodi attivi
+scripts/rosaia.sh stop
+
+# PWM zero e arresto dei soli processi creati da workflow start
+scripts/rosaia.sh workflow stop</code></pre>
+    <p>In modalità manuale interrompere recorder, detector, dashboard e bridge con
+      <kbd>Ctrl</kbd>+<kbd>C</kbd>. <code>workflow stop</code> non termina nodi che erano
+      già attivi prima del suo avvio. Il comando host non sostituisce il watchdog
+      firmware né il sezionamento dell’alimentazione.</p>
   </section>
 
-  <footer>Documento locale e versionato · aggiornare insieme a wiring, config ROS e protocollo firmware.</footer>
+  <footer>Documento locale e versionato · aggiornare insieme a wiring, config ROS,
+    protocollo firmware, posa camera e risultati di calibrazione.</footer>
 </main>
 <script>
   document.querySelectorAll('pre').forEach((pre) => {

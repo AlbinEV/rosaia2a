@@ -83,6 +83,11 @@ def encode_stop() -> bytes:
     return b'STOP\n'
 
 
+def encode_zero_encoders() -> bytes:
+    """Encode a mechanical-home encoder reset."""
+    return b'ZERO_ENC\n'
+
+
 def encode_step_axis(
     sequence: int, axis: int, signed_count_limit: int, pwm: int
 ) -> bytes:

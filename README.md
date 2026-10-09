@@ -86,6 +86,20 @@ The helper `scripts/rosaia.sh` also provides build, test, bridge, vision,
 excitation generation, MLP training, learned-Jacobian inference, status,
 preview, visualization, and stop commands.
 
+After placing both arms at mechanical home, the complete two-arm calibration
+and concept-demonstration workflow is available as:
+
+```bash
+scripts/rosaia.sh workflow start --enable-motion
+scripts/rosaia.sh workflow calibrate --label demo_5v6
+scripts/rosaia.sh workflow demo
+```
+
+The calibration command resets encoder and camera references, records separate
+training and validation sweeps, audits them, trains both MLPs, hot-reloads the
+dashboard, and returns each arm home after its sweep. Keep the camera and base
+markers fixed for the resulting models.
+
 Open the live two-arm dashboard with:
 
 ```bash

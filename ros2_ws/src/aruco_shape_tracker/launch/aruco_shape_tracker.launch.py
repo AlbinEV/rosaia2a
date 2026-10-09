@@ -9,7 +9,7 @@ def generate_launch_description():
     return LaunchDescription([
         Node(
             package='aruco_shape_tracker',
-            executable='aruco_shape_tracker',
+            executable='aruco_shape_tracker_cpp',
             name='aruco_shape_tracker',
             output='screen',
             parameters=[str(share / 'config' / 'two_arms.yaml')],

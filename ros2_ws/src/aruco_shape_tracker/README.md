@@ -7,6 +7,15 @@ six-dimensional visual state used by identification and control:
 x = [x1, y1, x2, y2, x3, y3]
 ```
 
+The launch file runs the C++ implementation (`aruco_shape_tracker_cpp`). The
+original Python geometry and Kalman modules remain as executable reference
+specifications and unit tests. Building requires the RealSense development
+headers in addition to the runtime already needed by the camera:
+
+```bash
+sudo apt install librealsense2-dev
+```
+
 The RGB image supplies sub-pixel ArUco corners. Depth is aligned to colour and
 estimated as a robust median inside the central 60% of each marker, avoiding
 mixed pixels at its edges. Marker centres are deprojected into metric 3-D
@@ -37,7 +46,7 @@ during calibration.
 | `/arm_2/aruco_state` | `sensor_msgs/PointCloud` | filtered metric points 5, 6, 7 in base-1 frame |
 | `/arm_1/aruco_points_3d_raw` | `sensor_msgs/PointCloud` | raw camera-frame points 2, 3, 4 |
 | `/arm_2/aruco_points_3d_raw` | `sensor_msgs/PointCloud` | raw camera-frame points 5, 6, 7 |
-| `/aruco/status` | `std_msgs/String` | JSON detection/depth completeness |
+| `/aruco/status` | `std_msgs/String` | JSON completeness plus per-stage timing |
 | `/aruco/annotated/compressed` | `sensor_msgs/CompressedImage` | annotated RGB JPEG with depth labels |
 
 The current D435 profile and serial are in `config/two_arms.yaml`. The physical
@@ -48,6 +57,12 @@ source /opt/ros/jazzy/setup.bash
 source ros2_ws/install/setup.bash
 ros2 launch aruco_shape_tracker aruco_shape_tracker.launch.py
 ```
+
+On the development workstation, the C++ node sustains both arm states and the
+annotated JPEG at 30 Hz for the 1280x720 RGB-D profile. The status timing fields
+`acquire_align_ms`, `detect_ms`, `measure_publish_ms`, and `processing_ms`
+separate camera alignment, ArUco detection, and the remaining reconstruction
+work. They should be checked after camera or resolution changes.
 
 The local z values currently measure optical depth relative to the respective
 base centre. Because the base markers are physically closer to the camera than

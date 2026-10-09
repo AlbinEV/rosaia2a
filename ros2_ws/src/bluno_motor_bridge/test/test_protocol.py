@@ -6,6 +6,7 @@ from bluno_motor_bridge.protocol import (
     encode_command,
     encode_step_axis,
     encode_stop,
+    encode_zero_encoders,
     parse_state,
     ProtocolError,
 )
@@ -33,6 +34,7 @@ def test_encode_command() -> None:
     assert encode_command(152, (80, -40)) == b'CMD,152,80,-40\n'
     assert encode_stop() == b'STOP\n'
     assert encode_step_axis(7, 1, -5, 120) == b'STEP_AXIS,7,1,-5,120\n'
+    assert encode_zero_encoders() == b'ZERO_ENC\n'
 
 
 @pytest.mark.parametrize(

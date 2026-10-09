@@ -22,6 +22,7 @@ Commands:
   build                 Build all ROS 2 packages with symlink install
   test                  Run package tests and print their results
   bridge                Start the Bluno serial bridge
+  velocity-controller   Start the encoder-velocity PWM controller
   vision                Start the RealSense RGB-D ArUco tracker
   recorder [NAME]       Record synchronized CSV data under data/sessions
   audit [ARGS]          Audit recorded sessions before MLP training
@@ -38,6 +39,9 @@ Commands:
   step AXIS MOTOR_COUNTS PWM
                         Send one bounded move; sign selects motor direction
   preview               Run the direct single-camera ArUco preview
+  workflow [ARGS]       Bring-up, calibrate/train, and open the demo
+  position-test [ARGS]  Test controlled q target and automatic return home
+  dual-position-test    Move both q targets together and return home
 EOF
 }
 
@@ -59,6 +63,10 @@ case "$command" in
   bridge)
     source_ros
     exec ros2 launch bluno_motor_bridge bluno_motor_bridge.launch.py "$@"
+    ;;
+  velocity-controller)
+    source_ros
+    exec ros2 launch bluno_motor_bridge encoder_velocity_controller.launch.py "$@"
     ;;
   vision)
     source_ros
@@ -127,7 +135,8 @@ case "$command" in
     ;;
   stop)
     source_ros
-    ros2 topic pub --once /motor_command std_msgs/msg/Int16MultiArray \
+    ros2 topic pub --once --wait-matching-subscriptions 0 \
+      /motor_command std_msgs/msg/Int16MultiArray \
       '{data: [0, 0]}'
     ;;
   step)
@@ -142,6 +151,19 @@ case "$command" in
   preview)
     cd "$REPO_ROOT"
     exec python3 scripts/single_aruco_preview.py "$@"
+    ;;
+  workflow)
+    source_ros
+    cd "$REPO_ROOT"
+    exec python3 "$REPO_ROOT/scripts/rosaia_workflow.py" "$@"
+    ;;
+  position-test)
+    cd "$REPO_ROOT"
+    exec python3 "$REPO_ROOT/scripts/run_controlled_position_test.py" "$@"
+    ;;
+  dual-position-test)
+    cd "$REPO_ROOT"
+    exec python3 "$REPO_ROOT/scripts/run_dual_position_test.py" "$@"
     ;;
   help|-h|--help)
     usage

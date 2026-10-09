@@ -91,6 +91,45 @@ def test_pwm_slew_rate_limits_command_steps() -> None:
     assert controller.update(10.0, 0.0, 0.1) == -20
 
 
+def test_pwm_fall_rate_drops_to_running_level_after_breakaway() -> None:
+    """Detected motion can remove breakaway boost faster than it was applied."""
+    controller = VelocityController(
+        -1, 100.0, 50.0, 0.0, 0.0, 0.0, 200,
+        maximum_pwm_rate=1000.0,
+        maximum_pwm_fall_rate=3000.0,
+    )
+    assert controller.update(5.0, 0.0, 0.1) == -100
+    assert controller.update(5.0, 5.0, 0.02) == -50
+
+
+@pytest.mark.parametrize(
+    ('scale', 'expected'), [(0.8, -80), (1.0, -100), (1.2, -120)]
+)
+def test_pwm_output_scale_adjusts_standard_effort(scale, expected) -> None:
+    """Runtime demo tuning scales PWM before saturation and slew limiting."""
+    controller = VelocityController(
+        -1, 100.0, 80.0, 0.0, 0.0, 0.0, 200,
+        maximum_pwm_rate=10000.0,
+    )
+    assert controller.update(
+        5.0, 0.0, 0.1, output_scale=scale
+    ) == expected
+
+
+@pytest.mark.parametrize('scale', [0.0, 0.49, 1.51, float('nan')])
+def test_invalid_pwm_output_scale_is_rejected(scale) -> None:
+    """Unsafe or non-finite output multipliers never reach the motor."""
+    with pytest.raises(ValueError):
+        make_controller().update(5.0, 0.0, 0.1, output_scale=scale)
+
+
+def test_scaled_saturation_does_not_wind_up_integrator() -> None:
+    """A positive multiplier participates in anti-windup saturation logic."""
+    controller = make_controller()
+    controller.update(500.0, 0.0, 1.0, output_scale=1.2)
+    assert controller.integral == 0.0
+
+
 def test_friction_schedule_interpolates_and_clamps() -> None:
     """Position lookup is linear internally and clamps beyond its endpoints."""
     schedule = FrictionSchedule(

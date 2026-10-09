@@ -7,6 +7,13 @@ aruco_shape_tracker:
     height: 720
     fps: 30
     dictionary: "DICT_4X4_50"
+    # Robust two-stage detection for the oblique arm-tip marker. The normal
+    # windows cover the main frame; one large-window fallback recovers ID 7.
+    adaptive_threshold_window_max: 23
+    fallback_threshold_window_size: 53
+    minimum_marker_perimeter_rate: 0.03
+    polygonal_approx_accuracy_rate: 0.03
+    error_correction_rate: 0.80
     minimum_reference_area_px2: 80.0
     minimum_base_baseline_m: 0.10
     depth_inner_fraction: 0.60

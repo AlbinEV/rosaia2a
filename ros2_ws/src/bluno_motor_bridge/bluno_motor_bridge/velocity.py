@@ -71,6 +71,7 @@ class VelocityController:
     movement_velocity_threshold: float = 2.0
     movement_hold_s: float = 0.25
     maximum_pwm_rate: float = 400.0
+    maximum_pwm_fall_rate: float = 2000.0
     reference_deadband: float = 0.05
     integral_limit: float = 200.0
     positive_friction: FrictionSchedule | None = None
@@ -98,8 +99,8 @@ class VelocityController:
             self.integral_limit,
         ) < 0.0:
             raise ValueError('controller gains and limits must be non-negative')
-        if self.maximum_pwm_rate <= 0.0:
-            raise ValueError('maximum_pwm_rate must be positive')
+        if self.maximum_pwm_rate <= 0.0 or self.maximum_pwm_fall_rate <= 0.0:
+            raise ValueError('PWM slew rates must be positive')
 
     def reset(self) -> None:
         """Clear dynamic state after a stop, stale input or direction change."""
@@ -114,12 +115,18 @@ class VelocityController:
         measured: float,
         dt_s: float,
         position: float | None = None,
+        output_scale: float = 1.0,
     ) -> int:
         """Return a signed integer PWM command for an operational velocity."""
-        if not all(math.isfinite(value) for value in (reference, measured, dt_s)):
+        if not all(
+            math.isfinite(value)
+            for value in (reference, measured, dt_s, output_scale)
+        ):
             raise ValueError('velocity controller inputs must be finite')
         if dt_s <= 0.0:
             raise ValueError('dt_s must be positive')
+        if not 0.5 <= output_scale <= 1.5:
+            raise ValueError('output_scale must be in [0.5, 1.5]')
         if abs(reference) <= self.reference_deadband:
             self.reset()
             return 0
@@ -163,7 +170,8 @@ class VelocityController:
             + self.integral_gain * candidate_integral
         )
         drives_high_saturation = (
-            candidate_magnitude > self.maximum_pwm and error > 0.0
+            candidate_magnitude * output_scale > self.maximum_pwm
+            and error > 0.0
         )
         drives_low_saturation = candidate_magnitude < 0.0 and error < 0.0
         if not (drives_high_saturation or drives_low_saturation):
@@ -174,10 +182,18 @@ class VelocityController:
             + self.proportional_gain * error
             + self.integral_gain * self.integral
         )
+        magnitude *= output_scale
         magnitude = max(0.0, min(float(self.maximum_pwm), magnitude))
         command_direction = self.command_to_q_sign * direction
         target_command = command_direction * magnitude
-        maximum_delta = self.maximum_pwm_rate * dt_s
+        same_direction = target_command * self.last_command >= 0.0
+        reducing_magnitude = abs(target_command) < abs(self.last_command)
+        slew_rate = (
+            self.maximum_pwm_fall_rate
+            if same_direction and reducing_magnitude
+            else self.maximum_pwm_rate
+        )
+        maximum_delta = slew_rate * dt_s
         delta = max(
             -maximum_delta,
             min(maximum_delta, target_command - self.last_command),

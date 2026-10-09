@@ -19,8 +19,12 @@ rosaia_dashboard:
     enable_goal_publish: false
     enable_motor_execute: false
     maximum_move_counts: 220
+    minimum_position_counts: [0, 0]
+    maximum_position_counts: [300, 300]
     motor_step_counts: 5
-    target_tolerance_counts: 5
+    # The cable relaxes by about 3 counts after PWM goes to zero. A four-count
+    # settling band prevents repeated low-speed breakaway attempts at target.
+    target_tolerance_counts: 4
     motor_step_timeout_s: 4.0
     motor_step_retries: 3
     command_to_q_signs: [-1, -1]
@@ -29,8 +33,22 @@ rosaia_dashboard:
     high_q_thresholds: [190, 10000]
     high_q_contraction_pwm: [130, 180]
     maximum_abs_current_a: [2.8, 2.8]
-    motion_mode: "continuous"
+    # Cascaded position -> velocity -> PWM control. The outer loop slows near
+    # the target, settles, and performs a dwell before any reverse correction.
+    motion_mode: "velocity_position"
     continuous_control_rate_hz: 30.0
     continuous_motion_timeout_s: 30.0
     continuous_no_motion_timeout_s: 3.0
     continuous_ramp_s: 0.5
+    # Switch to firmware-local encoder steps before high-speed target crossing.
+    continuous_transition_counts: 40
+    continuous_settle_s: 0.2
+    position_control_rate_hz: 30.0
+    position_proportional_gain: [0.5, 0.5]
+    position_minimum_velocity: [2.0, 2.0]
+    position_maximum_velocity: [20.0, 20.0]
+    position_maximum_acceleration: [12.0, 12.0]
+    position_settle_s: 0.5
+    position_reverse_dwell_s: 0.35
+    position_maximum_reversals: 4
+    vision_loss_grace_s: 2.0

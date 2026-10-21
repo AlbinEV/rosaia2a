@@ -6,6 +6,7 @@ import pytest
 from rosaia_dashboard.projection import (
     project_curvature_goal,
     project_planar_goal,
+    project_tip_goal,
     signed_planar_curvature,
 )
 from rosaia_learning.model import NumpyMlpModel
@@ -24,6 +25,36 @@ def linear_model():
         q_min=0.0,
         q_max=10.0,
     )
+
+
+def test_tip_region_uses_last_marker_and_integer_target():
+    """A reachable tip region produces an executable integer coordinate."""
+    model = linear_model()
+    center = model.predict_and_jacobian(3)[0][-2:]
+    result = project_tip_goal(model, center, 0.01, current_q=0)
+    assert result.reachable
+    assert result.q == 3
+    assert result.distance_m < 1e-10
+
+
+def test_tip_region_reports_unreachable_without_claiming_success():
+    """Projection outside the learned locus remains explicitly unreachable."""
+    result = project_tip_goal(linear_model(), [100, 100], 0.001)
+    assert not result.reachable
+    assert result.distance_m > 0.001
+
+
+def test_tip_region_prefers_nearby_encoder_when_already_inside():
+    """A broad region does not command unnecessary travel across the locus."""
+    result = project_tip_goal(linear_model(), [15, 0.5], 100, current_q=7)
+    assert result.q == 7
+
+
+@pytest.mark.parametrize('center,radius', [([0, 0], 0), ([float('nan'), 0], 1)])
+def test_tip_region_rejects_invalid_request(center, radius):
+    """Reject invalid targets before model evaluation."""
+    with pytest.raises(ValueError):
+        project_tip_goal(linear_model(), center, radius)
 
 
 def test_projection_recovers_reachable_coordinate():
@@ -105,3 +136,18 @@ def test_curvature_projection_recovers_model_coordinate():
         model, curvature, current_q=4.0, curvature_tolerance=0.0
     )
     assert result.q == pytest.approx(4.0, abs=0.02)
+
+
+def test_positive_curvature_supports_mirrored_arms():
+    """Mirror sign is retained internally while requests use magnitude."""
+    model = linear_model()
+    curve = abs(signed_planar_curvature(model.predict_and_jacobian(4)[0]))
+    first = project_curvature_goal(model, curve, current_q=4,
+                                   magnitude=True, curvature_tolerance=0)
+    model.weights[0][:, ::2] *= -1
+    second = project_curvature_goal(model, curve, current_q=4,
+                                    magnitude=True, curvature_tolerance=0)
+    assert first.q == pytest.approx(second.q)
+    assert first.achieved_curvature == pytest.approx(-second.achieved_curvature)
+    with pytest.raises(ValueError):
+        project_curvature_goal(model, -1, magnitude=True)

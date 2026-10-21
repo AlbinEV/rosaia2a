@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -20,10 +21,12 @@ from sensor_msgs.msg import CompressedImage, PointCloud
 from std_msgs.msg import Float64, Int16MultiArray, String
 from std_srvs.srv import Trigger
 
+from .display_geometry import home_display_reference, rectified_tip_xy, rectify_home_shape
 from .position_control import position_velocity_reference
 from .projection import (
     project_curvature_goal,
     project_planar_goal,
+    project_tip_goal,
     signed_planar_curvature,
 )
 
@@ -59,6 +62,9 @@ def _model_summary(directory: str, model) -> dict:
         'q_max': None if model is None else model.q_max,
         'curvature_min': None,
         'curvature_max': None,
+        'architecture': None if model is None else (
+            [int(model.weights[0].shape[0])]
+            + [int(weight.shape[1]) for weight in model.weights]),
     }
     if model is None:
         return summary
@@ -376,6 +382,8 @@ class DashboardNode(Node):
             'motion_mode': self._motion_mode,
             'pwm_scale_percent': 20,
             'home_calibrated': False,
+            'display_geometry': {'base_spacing_m': 0.40, 'home_references': {},
+                                 'mode': 'home_rectified'},
             'vision': None,
             'motor': None,
             'motion': {'state': 'idle'},
@@ -516,6 +524,14 @@ class DashboardNode(Node):
                 previous_mcu_time is not None
                 and current_mcu_time is not None
                 and int(current_mcu_time) < int(previous_mcu_time)
+                and not (
+                    int(previous_mcu_time) > 2**32 - 1000000
+                    and int(current_mcu_time) < 1000000
+                    and payload.get('sequence') == previous.get('sequence', -2) + 1
+                    and all(abs(a-b) <= 32 for a, b in zip(
+                        previous.get('encoder_counts', []),
+                        payload.get('encoder_counts', [])))
+                )
             ):
                 self._state['home_calibrated'] = False
                 self._state['motion'] = {
@@ -549,11 +565,20 @@ class DashboardNode(Node):
             return
         with self._lock:
             self._state['pwm_scale_percent'] = round(100.0 * (scale - 1.0))
+            self._state['velocity_controller'] = payload
 
     def snapshot(self) -> dict:
         """Return an isolated JSON round-trip copy of current dashboard state."""
         with self._lock:
-            return json.loads(json.dumps(self._state))
+            snapshot = json.loads(json.dumps(self._state))
+        references = snapshot['display_geometry']['home_references']
+        for arm, state in snapshot['arms'].items():
+            reference = references.get(arm)
+            for key in ('current', 'feasible'):
+                if reference and state.get(key):
+                    state[key]['display_points'] = rectify_home_shape(
+                        state[key]['points'], reference)
+        return snapshot
 
     def set_goal(self, payload: dict) -> tuple[int, dict]:
         """Project a requested planar shape and optionally publish it."""
@@ -665,7 +690,7 @@ class DashboardNode(Node):
             requested_curvature = float(payload['curvature'])
         except (KeyError, TypeError, ValueError):
             return HTTPStatus.BAD_REQUEST, {'error': 'invalid curvature'}
-        if not math.isfinite(requested_curvature):
+        if not math.isfinite(requested_curvature) or requested_curvature < 0:
             return HTTPStatus.BAD_REQUEST, {'error': 'invalid curvature'}
         model = self._models[arm_name]
         if model is None:
@@ -683,10 +708,13 @@ class DashboardNode(Node):
             float(counts[config['axis']]) - config['zero']
         )
         result = project_curvature_goal(
-            model, requested_curvature, current_q=current_q
+            model, requested_curvature, current_q=current_q, magnitude=True
         )
-        curvature_min = self._model_summaries[arm_name]['curvature_min']
-        curvature_max = self._model_summaries[arm_name]['curvature_max']
+        signed_min = self._model_summaries[arm_name]['curvature_min']
+        signed_max = self._model_summaries[arm_name]['curvature_max']
+        curvature_min = 0.0 if signed_min <= 0 <= signed_max else min(
+            abs(signed_min), abs(signed_max))
+        curvature_max = max(abs(signed_min), abs(signed_max))
         z_values = (
             [point['z'] for point in current['points']]
             if current is not None else [0.0, 0.0, 0.0]
@@ -700,12 +728,14 @@ class DashboardNode(Node):
             for index in range(3)
         ]
         projection = {
+            'mode': 'curvature',
             'q': result.q,
             'q_current': current_q,
             'curvature_target': result.requested_curvature,
-            'curvature_achieved': result.achieved_curvature,
+            'curvature_achieved': abs(result.achieved_curvature),
+            'curvature_signed': result.achieved_curvature,
             'curvature_error': (
-                result.achieved_curvature - result.requested_curvature
+                abs(result.achieved_curvature) - result.requested_curvature
             ),
             'curvature_min': curvature_min,
             'curvature_max': curvature_max,
@@ -714,6 +744,8 @@ class DashboardNode(Node):
             ),
             'weighted_error_m': 0.0,
         }
+        projection['motion_plan'] = self.projection_motion_plan(
+            arm_name, result.q, current_q)
         with self._lock:
             arm_state = self._state['arms'][arm_name]
             arm_state['requested'] = None
@@ -723,6 +755,72 @@ class DashboardNode(Node):
             'projection': projection,
             'feasible': feasible,
         }
+
+    def projection_motion_plan(self, arm_name, target_q, current_q):
+        """Describe controller speed separately from neural shape inference."""
+        config = self._arm_encoder_config[arm_name]
+        error = float(target_q) - current_q
+        speed = 0.0 if abs(error) <= self._target_tolerance else math.copysign(
+            min(config['position_maximum_velocity'], max(
+                config['position_minimum_velocity'],
+                config['position_gain'] * abs(error))), error)
+        initial = position_velocity_reference(
+            error, 0.0, 1.0 / self._position_rate, config['position_gain'],
+            config['position_minimum_velocity'], config['position_maximum_velocity'],
+            config['position_maximum_acceleration'], self._target_tolerance)
+        return {'target_q': int(round(target_q)), 'current_q': current_q,
+                'desired_velocity_counts_s': speed,
+                'initial_velocity_counts_s': initial,
+                'maximum_velocity_counts_s': config['position_maximum_velocity'],
+                'maximum_acceleration_counts_s2': config['position_maximum_acceleration'],
+                'source': 'position_controller', 'motion_mode': self._motion_mode}
+
+    def set_tip_goal(self, payload):
+        """Project a circular region for the final marker onto the learned arm."""
+        arm = str(payload.get('arm', ''))
+        if arm not in self._models:
+            return HTTPStatus.BAD_REQUEST, {'error': 'unknown arm'}
+        model = self._models[arm]
+        if model is None:
+            return HTTPStatus.CONFLICT, {'error': 'no model configured'}
+        try:
+            center = [float(payload['x']), float(payload['y'])]
+            radius = float(payload['radius'])
+            snapshot = self.snapshot()
+            config = self._arm_encoder_config[arm]
+            motor = snapshot.get('motor')
+            if motor is None:
+                return HTTPStatus.CONFLICT, {'error': 'motor telemetry unavailable'}
+            q = config['sign'] * (float(motor['encoder_counts'][config['axis']]) - config['zero'])
+            reference = snapshot['display_geometry']['home_references'].get(arm)
+            display_coordinates = payload.get('coordinate_frame') == 'home_display'
+            if display_coordinates and not reference:
+                return HTTPStatus.CONFLICT, {'error': 'set the display home first'}
+            transform = None
+            if display_coordinates:
+                transform = partial(rectified_tip_xy, reference=reference)
+            result = project_tip_goal(
+                model, center, radius, current_q=q, tip_transform=transform)
+        except (KeyError, TypeError, ValueError, IndexError):
+            return HTTPStatus.BAD_REQUEST, {'error': 'invalid tip coordinates or radius'}
+        current = snapshot['arms'][arm]['current']
+        z = [p['z'] for p in current['points']] if current else [0.0] * 3
+        feasible = [{'x': float(result.state[2*i]),
+                     'y': float(result.state[2*i+1]), 'z': float(z[i])}
+                    for i in range(3)]
+        projection = {'mode': 'tip', 'q': result.q, 'q_current': q,
+                      'tip_target': {'x': center[0], 'y': center[1], 'radius': radius,
+                                     'coordinate_frame': (
+                                         'home_display' if display_coordinates else 'raw')},
+                      'tip_distance_m': result.distance_m,
+                      'tip_reachable': result.reachable,
+                      'curvature_achieved': abs(signed_planar_curvature(result.state)),
+                      'motion_plan': self.projection_motion_plan(arm, result.q, q)}
+        with self._lock:
+            self._state['arms'][arm]['requested'] = None
+            self._state['arms'][arm]['feasible'] = {'points': feasible}
+            self._state['arms'][arm]['projection'] = projection
+        return HTTPStatus.OK, {'projection': projection, 'feasible': feasible}
 
     def reload_models(self, payload: dict) -> tuple[int, dict]:
         """Atomically replace arm models after a calibration workflow."""
@@ -789,6 +887,10 @@ class DashboardNode(Node):
             config = self._arm_encoder_config[arm_name]
             if projection is None and direct_target is None:
                 return HTTPStatus.CONFLICT, {'error': 'calculate inference first'}
+            if direct_target is None and projection.get('tip_reachable') is False:
+                return HTTPStatus.CONFLICT, {
+                    'error': 'tip target region is outside the learned workspace'
+                }
             if motor is None or self._motor_received_at is None:
                 return HTTPStatus.CONFLICT, {'error': 'motor telemetry unavailable'}
             if time.monotonic() - self._motor_received_at > 0.2:
@@ -995,6 +1097,15 @@ class DashboardNode(Node):
                 return HTTPStatus.CONFLICT, {'error': 'motors are not stopped'}
             if any(int(value) for value in motor.get('requested_commands', [])):
                 return HTTPStatus.CONFLICT, {'error': 'motor command is not zero'}
+            try:
+                references = {
+                    arm: home_display_reference(state['current']['points'])
+                    for arm, state in self._state['arms'].items()
+                }
+            except (KeyError, TypeError, ValueError):
+                return HTTPStatus.CONFLICT, {
+                    'error': 'both visual arm shapes are required for home'
+                }
             self._home_in_progress = True
             self._state['motion'] = {
                 'state': 'setting_home', 'arm': 'both',
@@ -1041,6 +1152,7 @@ class DashboardNode(Node):
                     'encoder_counts': [0, 0],
                 }
                 self._state['home_calibrated'] = True
+                self._state['display_geometry']['home_references'] = references
             return HTTPStatus.OK, {
                 'success': True,
                 'message': 'home set; encoders confirmed at [0, 0]',
@@ -1776,7 +1888,7 @@ class DashboardNode(Node):
 
             def do_POST(self):
                 if self.path not in (
-                    '/api/goal', '/api/curvature',
+                    '/api/goal', '/api/curvature', '/api/tip',
                     '/api/execute', '/api/position', '/api/cancel',
                     '/api/positions', '/api/models', '/api/home',
                     '/api/pwm-scale',
@@ -1795,6 +1907,8 @@ class DashboardNode(Node):
                     status, response = node.set_goal(payload)
                 elif self.path == '/api/curvature':
                     status, response = node.set_curvature_goal(payload)
+                elif self.path == '/api/tip':
+                    status, response = node.set_tip_goal(payload)
                 elif self.path in ('/api/execute', '/api/position'):
                     status, response = node.execute_projection(payload)
                 elif self.path == '/api/positions':

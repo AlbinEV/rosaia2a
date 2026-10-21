@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ROSAIA · OPEN / CLOSE</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#09121c;color:#edf6fc}body{max-width:1250px;margin:28px auto;padding:0 22px}header{display:flex;justify-content:space-between;align-items:center}h1{margin:0;font-size:30px}small{color:#99adbd}.card{background:#111f2c;border:1px solid #294253;border-radius:18px;padding:22px;margin-top:20px}.controls{display:flex;gap:14px;flex-wrap:wrap;align-items:center}button{border:0;border-radius:12px;padding:20px 46px;font-size:23px;font-weight:700;cursor:pointer;background:#42c8e6;color:#08202c}#close{background:#6de39b}#stop{margin-left:auto;background:#e44f60;color:white;padding:20px}button:disabled{opacity:.35;cursor:not-allowed}.scale{display:flex;align-items:center;gap:16px;margin-top:22px}input{width:240px}#message{min-height:24px;color:#ffcf7d}.telemetry,.views{display:grid;grid-template-columns:1fr 1fr;gap:18px}.readout{font-size:24px;font-variant-numeric:tabular-nums}.views img,.views canvas{width:100%;border-radius:12px;background:#071019}.views img{aspect-ratio:16/9;object-fit:contain}canvas{height:auto}a{color:#42c8e6}@media(max-width:780px){.telemetry,.views{grid-template-columns:1fr}#stop{margin-left:0}button{padding:18px 26px}.scale{flex-wrap:wrap}}
+</style></head><body>
+<header><div><h1>ROSAIA</h1></div><small id="connection">Connessione…</small></header>
+<section class="card"><div class="controls"><button id="open" disabled>OPEN</button><button id="close" disabled>CLOSE</button><button id="stop">STOP</button></div>
+<div class="scale"><label for="intensity">Intensità PWM</label><input id="intensity" type="range" min="50" max="120" step="5" value="100"><output id="percent">100%</output><small>100% = valori provati; modifica a motori fermi.</small></div><p id="message" role="status"></p></section>
+<section class="telemetry"><article class="card"><small>Motore 0 · camera ARM 2</small><p class="readout" id="q0">—</p><small id="c0">—</small></article><article class="card"><small>Motore 1</small><p class="readout" id="q1">—</p><small id="c1">—</small></article></section>
+<section class="views"><article class="card"><h3>Camera · ArUco live</h3><img id="camera" alt="Camera con marker ArUco"></article><article class="card"><h3>Forma misurata</h3><canvas id="shape" width="600" height="420"></canvas></article></section>
+<section class="card"><h3>Correnti motori · ultimi 30 secondi</h3><p><span style="color:#40cde6">● Motore 0</span> &nbsp; <span style="color:#79e69e">● Motore 1</span> &nbsp; <small id="current-status">In attesa dei segnali…</small></p><canvas id="currents" width="1100" height="280" style="width:100%;background:#071019;border-radius:12px" role="img" aria-label="Correnti stimate dei due motori in ampere negli ultimi trenta secondi"></canvas></section>
+<script>
+let pending=false,cameraBusy=false,pwmDirty=false;
+const currentHistory=[];
+let currentSequence=null;
+function sampleCurrents(motor){
+  if(!motor||motor.sequence==null||motor.sequence===currentSequence)return;
+  const values=motor.current_a_host;
+  if(!Array.isArray(values)||!values.some(Number.isFinite))return;
+  currentSequence=motor.sequence;
+  const now=performance.now()/1000;
+  currentHistory.push({t:now,values:[0,1].map(i=>Number.isFinite(values[i])?values[i]:null)});
+  while(currentHistory.length&&currentHistory[0].t<now-30)currentHistory.shift();
+}
+function drawCurrents(){
+  const canvas=document.querySelector('#currents'),ctx=canvas.getContext('2d');
+  const w=canvas.width,h=canvas.height,left=65,right=w-20,top=18,bottom=h-38,now=performance.now()/1000;
+  ctx.clearRect(0,0,w,h);
+  const visible=currentHistory.filter(p=>p.t>=now-30);
+  const peak=Math.max(.5,...visible.flatMap(p=>p.values.filter(Number.isFinite).map(Math.abs)));
+  const limit=Math.ceil(peak*1.15*4)/4;
+  const x=t=>left+(t-(now-30))/30*(right-left),y=v=>top+(limit-v)/(2*limit)*(bottom-top);
+  ctx.font='13px system-ui';ctx.textAlign='right';
+  for(let i=-2;i<=2;i++){const value=i*limit/2;ctx.strokeStyle=i===0?'#476071':'#203443';ctx.beginPath();ctx.moveTo(left,y(value));ctx.lineTo(right,y(value));ctx.stroke();ctx.fillStyle='#a7bdcd';ctx.fillText(value.toFixed(2)+' A',left-8,y(value)+4);}
+  ctx.textAlign='center';
+  for(const seconds of [30,20,10,0]){const px=x(now-seconds);ctx.strokeStyle='#203443';ctx.beginPath();ctx.moveTo(px,top);ctx.lineTo(px,bottom);ctx.stroke();ctx.fillStyle='#a7bdcd';ctx.fillText(seconds===0?'ora':'−'+seconds+' s',px,h-13);}
+  for(const axis of [0,1]){ctx.save();ctx.beginPath();ctx.rect(left,top,right-left,bottom-top);ctx.clip();ctx.strokeStyle=axis===0?'#40cde6':'#79e69e';ctx.lineWidth=2.5;ctx.beginPath();let previous=null;
+    for(const point of visible){const value=point.values[axis];if(value===null){previous=null;continue;}if(!previous||point.t-previous.t>1)ctx.moveTo(x(point.t),y(value));else ctx.lineTo(x(point.t),y(value));previous=point;}ctx.stroke();ctx.restore();}
+  const last=visible.at(-1),fresh=last&&now-last.t<1;
+  document.querySelector('#current-status').textContent=!last?'In attesa dei segnali…':!fresh?'Segnale non aggiornato':last.values.map((v,i)=>`M${i}: ${v===null?'—':v.toFixed(2)+' A'}`).join(' · ');
+}
+const msg=document.querySelector('#message'),slider=document.querySelector('#intensity');
+async function post(path,data){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const s=await r.json();if(!r.ok)throw Error(s.error||'Comando rifiutato');return s;}
+async function move(pose){if(pending)return;pending=true;document.querySelectorAll('.controls button:not(#stop)').forEach(b=>b.disabled=true);try{const s=await post('/simple/pose',{pose});msg.textContent=s.message;}catch(e){msg.textContent=e.message;}finally{pending=false;}}
+document.querySelector('#open').onclick=()=>move('open');document.querySelector('#close').onclick=()=>move('close');
+document.querySelector('#stop').onclick=async()=>{try{await post('/simple/stop',{});msg.textContent='STOP richiesto';}catch(e){msg.textContent=e.message;}};
+slider.oninput=()=>{pwmDirty=true;document.querySelector('#percent').textContent=slider.value+'%';};
+slider.onchange=async()=>{try{const s=await post('/simple/pwm',{percent:Number(slider.value)});msg.textContent=s.message;}catch(e){msg.textContent=e.message;}finally{pwmDirty=false;}};
+function draw(state){const canvas=document.querySelector('#shape'),ctx=canvas.getContext('2d');ctx.clearRect(0,0,600,420);ctx.fillStyle='#224257';ctx.fillRect(85,42,430,16);
+['arm_1','arm_2'].forEach((name,i)=>{const current=state.arms?.[name]?.current;if(!current)return;const raw=current.display_points||current.points;const x0=198+i*204,y0=68;const p=[[x0,y0],...raw.map(p=>[x0+p.x*510,y0+p.y*510])];ctx.strokeStyle=i?'#79e69e':'#40cde6';ctx.lineWidth=7;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(...p[0]);for(let j=0;j<p.length-1;j++){const a=p[Math.max(0,j-1)],b=p[j],c=p[j+1],d=p[Math.min(p.length-1,j+2)];ctx.bezierCurveTo(b[0]+(c[0]-a[0])/6,b[1]+(c[1]-a[1])/6,c[0]-(d[0]-b[0])/6,c[1]-(d[1]-b[1])/6,...c);}ctx.stroke();ctx.fillStyle=ctx.strokeStyle;for(const v of p){ctx.beginPath();ctx.arc(...v,4,0,Math.PI*2);ctx.fill();}ctx.fillStyle='#b9cbd6';ctx.font='14px system-ui';ctx.fillText(name.toUpperCase(),x0-26,30);});}
+async function update(){try{const [status,state]=await Promise.all([fetch('/simple/status').then(r=>r.json()),fetch('/api/state').then(r=>r.json())]);const busy=status.moving||pending;
+document.querySelector('#connection').textContent=busy?'MOVIMENTO':'LIVE · '+(status.ready?'pronto':'non pronto');
+for(const id of ['open','close'])document.querySelector('#'+id).disabled=busy||!status.ready;slider.disabled=busy||!status.ready;
+if(!pwmDirty){slider.value=status.pwm_percent;document.querySelector('#percent').textContent=status.pwm_percent+'%';}
+for(const axis of [0,1]){document.querySelector('#q'+axis).textContent=`Encoder ${status.jog_positions?.[axis]??'—'} · raw ${status.encoders_raw?.[axis]??'—'}`;const close=status.jog_nominals?.[axis]?.close?.q;const current=state.motor?.current_a_host?.[axis];document.querySelector('#c'+axis).textContent=`HOME 0 · CLOSE ${close??'—'} · corrente stimata ${Number.isFinite(current)?current.toFixed(2):'—'} A`;}
+if(status.error)msg.textContent=status.error;else if(status.pose_result&&!status.moving)msg.textContent=`${status.pose_result.pose.toUpperCase()} completato · encoder [${status.pose_result.actual.join(', ')}]`;
+sampleCurrents(state.motor);drawCurrents();draw(state);}catch(e){drawCurrents();document.querySelector('#connection').textContent='OFFLINE';document.querySelector('#open').disabled=document.querySelector('#close').disabled=true;slider.disabled=true;}}
+function camera(){if(cameraBusy)return;cameraBusy=true;const image=document.querySelector('#camera');image.onload=image.onerror=()=>cameraBusy=false;image.src='/api/camera.jpg?t='+Date.now();}
+setInterval(update,250);setInterval(camera,150);update();camera();
+</script></body></html>

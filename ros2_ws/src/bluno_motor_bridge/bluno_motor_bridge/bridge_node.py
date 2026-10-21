@@ -196,6 +196,19 @@ class BlunoMotorBridge(Node):
             return
 
         requested = tuple(int(value) for value in message.data)
+        if requested == (0, 0) and self._step_active:
+            try:
+                if self._serial is not None:
+                    self._serial.write(encode_stop())
+                    self._serial.flush()
+            except (OSError, SerialException) as exc:
+                self._disconnect(str(exc))
+                return
+            self._step_active = False
+            self._step_seen_motion = False
+            self._step_deadline = None
+            self._last_written_commands = (0, 0)
+            self._stop_sent = True
         if any(abs(value) > self._limit for value in requested):
             self.get_logger().error(
                 f'rejected command {requested}: configured limit is {self._limit}'

@@ -27,6 +27,43 @@ class CurvatureProjectionResult:
     achieved_curvature: float
 
 
+@dataclass(frozen=True)
+class TipProjectionResult:
+    """Closest learned tip position to a circular planar target."""
+
+    q: float
+    state: np.ndarray
+    distance_m: float
+    reachable: bool
+
+
+def project_tip_goal(model, center, radius_m, *, current_q=None, tip_transform=None):
+    """Search integer encoder targets, matching motor execution resolution."""
+    target = np.asarray(center, dtype=float)
+    radius = float(radius_m)
+    if target.shape != (2,) or not np.isfinite(target).all():
+        raise ValueError('tip center must contain two finite coordinates')
+    if not np.isfinite(radius) or radius <= 0:
+        raise ValueError('tip radius must be finite and positive')
+    if current_q is not None and not np.isfinite(current_q):
+        raise ValueError('current encoder must be finite')
+    grid = np.arange(np.ceil(model.q_min), np.floor(model.q_max) + 1)
+    if not len(grid):
+        raise ValueError('model has no integer encoder target')
+    states = np.vstack([model.predict_and_jacobian(q)[0] for q in grid])
+    tips = states[:, -2:]
+    if tip_transform is not None:
+        tips = np.vstack([tip_transform(tip) for tip in tips])
+    distances = np.linalg.norm(tips - target, axis=1)
+    inside = np.flatnonzero(distances <= radius)
+    if len(inside) and current_q is not None:
+        best = inside[np.argmin(np.abs(grid[inside] - current_q))]
+    else:
+        best = int(np.argmin(distances))
+    return TipProjectionResult(float(grid[best]), states[best],
+                               float(distances[best]), bool(distances[best] <= radius))
+
+
 def signed_planar_curvature(state) -> float:
     """Fit a signed circle through the base and three ordered markers."""
     values = np.asarray(state, dtype=np.float64).reshape(-1)
@@ -63,11 +100,14 @@ def project_curvature_goal(
     current_q: float | None = None,
     coarse_samples: int = 1001,
     curvature_tolerance: float = 0.02,
+    magnitude: bool = False,
 ) -> CurvatureProjectionResult:
     """Select the closest reachable curvature, preferring q continuity."""
     curvature = float(requested_curvature)
     if not np.isfinite(curvature):
         raise ValueError('requested curvature must be finite')
+    if magnitude and curvature < 0:
+        raise ValueError('curvature magnitude must be non-negative')
     if current_q is not None and not np.isfinite(current_q):
         raise ValueError('current q must be finite')
     if coarse_samples < 3 or curvature_tolerance < 0.0:
@@ -79,7 +119,8 @@ def project_curvature_goal(
     curvatures = np.array([
         signed_planar_curvature(state) for state in states
     ])
-    errors = np.abs(curvatures - curvature)
+    compared = np.abs(curvatures) if magnitude else curvatures
+    errors = np.abs(compared - curvature)
     candidates = np.flatnonzero(
         errors <= float(np.min(errors)) + curvature_tolerance
     )

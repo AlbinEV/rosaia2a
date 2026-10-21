@@ -33,6 +33,7 @@ Commands:
   jacobian [ARGS]       Publish learned Jacobians from encoder positions
   controller            Start the non-actuating shape controller
   dashboard             Open the multimodal web dashboard backend
+  simple-demo           Single verified arm OPEN/CLOSE at localhost:8767
   view                  Open the annotated image with rqt_image_view
   status                Show devices, relevant nodes and topic rates
   stop                  Publish a zero command once
@@ -78,6 +79,11 @@ case "$command" in
     cd "$REPO_ROOT"
     exec ros2 launch rosaia_data_acquisition session_recorder.launch.py \
       session_name:="$session_name" output_root:="$REPO_ROOT/data/sessions"
+    ;;
+  simple-demo)
+    source_ros
+    cd "$REPO_ROOT"
+    exec python3 "$REPO_ROOT/scripts/simple_open_close.py" "$@"
     ;;
   audit)
     source_ros

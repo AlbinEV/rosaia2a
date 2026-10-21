@@ -62,6 +62,37 @@
     .detail { min-height:20px; margin-top:10px; color:var(--muted);
       font:12px ui-monospace,monospace; }
     .warn { color:var(--bad); }
+    body { background:radial-gradient(ellipse at 10% 0%,#14313e 0%,var(--bg) 58%); }
+    header { background:#081018cc; backdrop-filter:blur(12px); }
+    .card,.arm,.demo-controls { box-shadow:0 8px 28px #0003; }
+    .pipeline { margin-bottom:16px; }
+    .pipeline-head { display:flex;justify-content:space-between;align-items:center;gap:12px; }
+    .pipeline-grid { display:grid;grid-template-columns:1fr 1.6fr 1fr 1fr;gap:12px;margin-top:18px;align-items:stretch; }
+    .stage { border:1px solid var(--line);border-radius:10px;padding:14px;background:#09131c; }
+    .stage strong { display:block;font-size:23px;margin:12px 0;color:var(--live);font-variant-numeric:tabular-nums; }
+    .stage small { color:var(--muted);line-height:1.6; }
+    #network { width:100%;height:84px; }
+    .tip-fields { display:flex;gap:8px;flex-wrap:wrap;margin-top:10px; }
+    .tip-fields label { color:var(--muted);font-size:12px; }
+    .tip-fields input { display:block;width:100px;margin-top:5px; }
+    .mode { width:165px; }
+    .live-metrics { display:flex;gap:22px;border-top:1px solid var(--line);padding-top:12px;margin-top:16px;color:var(--muted); }
+    .live-metrics b { color:var(--text); }
+    .training-note { color:var(--muted);font-size:12px;line-height:1.6;margin:12px 0 0; }
+    .replay-controls {margin-bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+    #demo-label {color:var(--goal);font-size:13px;}
+    .illustrative #network circle {animation:neuralPulse 1.1s ease-in-out infinite alternate;}
+    @keyframes neuralPulse {from{opacity:.25;}to{opacity:1;}}
+    .legend { margin-top:10px;flex-wrap:wrap; }
+    @media(max-width:900px) { .pipeline-grid {grid-template-columns:1fr 1fr;} }
+    /* Demo view: keep telemetry visible, remove duplicate/technical controls. */
+    #preset-demo, #set-home, #apply-pwm-scale, #export-demo,
+    .demo-controls > label, .arm .controls button, .arm .detail,
+    .diagnostics > article:last-child { display:none; }
+    .diagnostics { grid-template-columns:1fr; }
+    .demo-controls > :not(#open-close):not(#stop-all):not(#open-close-status),
+    .replay-controls, .arms, .pipeline { display:none !important; }
+    #open-close { min-width:180px; font-size:1.3rem; padding:16px 32px; }
     @media(max-width:900px) { .arms,.telemetry,.diagnostics,.views { grid-template-columns:1fr; } }
   </style>
 </head>
@@ -69,11 +100,13 @@
   <header><h1>ROSAIA · Two-arm shape control</h1><div id="health">connecting…</div></header>
   <main>
     <section class="demo-controls">
+      <button id="open-close" class="primary" disabled>CLOSE</button>
+      <span id="open-close-status">OPEN/CLOSE · posizioni da verificare sul robot</span>
       <span class="label">Demo sequence</span>
       <button id="preset-demo">Load demo shapes</button>
-      <button id="project-both">Compute both</button>
-      <button id="execute-both" class="primary">Move both arms</button>
-      <button id="home-both">Controlled home</button>
+      <button id="project-both">Calcola target</button>
+      <button id="execute-both" class="primary">Muovi</button>
+      <button id="home-both">Home</button>
       <button id="set-home">Set current position as home</button>
       <label>PWM intensity
         <select id="pwm-scale">
@@ -84,6 +117,12 @@
       </label>
       <button id="apply-pwm-scale">Apply PWM</button>
       <button id="stop-all" class="stop">STOP</button>
+    </section>
+    <section class="card replay-controls">
+      <button id="record-demo">Registra segnali demo</button><button id="save-demo" disabled>Termina e salva</button>
+      <button id="play-demo">Replay registrazione</button><button id="exit-replay" disabled>Torna live</button>
+      <button id="export-demo">Scarica demo JSON</button>
+      <span id="demo-label">LIVE · segnali misurati</span>
     </section>
     <section class="telemetry">
       <div class="card"><div class="label">Encoder Arm 1</div><div class="value" id="enc-top-1">—</div></div>
@@ -99,8 +138,20 @@
       </article>
       <article class="overview card">
         <h2>Live front-view reconstruction</h2>
+        <div class="legend"><span style="color:var(--live)">● Forma misurata</span><span style="color:var(--fit)">● Forma prevista</span><span style="color:var(--goal)">◯ Zona obiettivo</span></div>
         <canvas id="front-view" width="600" height="420"></canvas>
+        <div class="training-note">Base–primo marker verticale nell'home; gli altri marker conservano la forma misurata. Distanza nominale basi 40 cm. Seleziona il braccio e fai clic per una zona punta.</div>
       </article>
+    </section>
+    <section class="card pipeline">
+      <div class="pipeline-head"><h2>Dal target al movimento</h2><select id="pipeline-arm"><option value="arm_1">Braccio 1</option><option value="arm_2">Braccio 2</option></select></div>
+      <div class="pipeline-grid">
+        <div class="stage"><span class="label">01 · Input</span><strong id="flow-input">—</strong><small>Curvatura oppure zona del marker finale</small></div>
+        <div class="stage"><span class="label">02 · Modello neurale</span><svg id="network" viewBox="0 0 230 80" aria-label="Schema del modello neurale"></svg><small id="flow-model">MLP: encoder → forma. Ricerca inversa per il target.</small></div>
+        <div class="stage"><span class="label">03 · Encoder obiettivo</span><strong id="flow-q">—</strong><small id="flow-current-q">Posizione attuale —</small></div>
+        <div class="stage"><span class="label">04 · Velocità controllore</span><strong id="flow-v">—</strong><small id="flow-limits">Profilo limitato in velocità e accelerazione</small></div>
+      </div>
+      <p class="training-note" id="flow-status">Calcola un target per vedere encoder e velocità pianificati. Il calcolo non muove il robot.</p>
     </section>
     <section class="diagnostics">
       <article class="card"><h2>Motor current · last 30 seconds</h2>
@@ -116,7 +167,7 @@
     <section class="arms">
       <article class="arm" data-arm="arm_1">
         <div class="arm-head"><h2>Arm 1</h2><span class="label model">model —</span></div>
-        <div class="controls"><label>κ goal [m⁻¹] <input class="curvature" type="text" inputmode="decimal" placeholder="e.g. -1.00"></label>
+        <div class="controls"><label>κ modello [m⁻¹] <input class="curvature" type="number" min="0" step="0.01" placeholder="e.g. 1.00"></label>
           <button class="project">Compute inference</button>
           <button class="execute">Send to motor</button>
           <button class="cancel">Cancel motion</button></div>
@@ -124,7 +175,7 @@
       </article>
       <article class="arm" data-arm="arm_2">
         <div class="arm-head"><h2>Arm 2</h2><span class="label model">model —</span></div>
-        <div class="controls"><label>κ goal [m⁻¹] <input class="curvature" type="text" inputmode="decimal" placeholder="e.g. 1.00"></label>
+        <div class="controls"><label>κ modello [m⁻¹] <input class="curvature" type="number" min="0" step="0.01" placeholder="e.g. 1.00"></label>
           <button class="project">Compute inference</button>
           <button class="execute">Send to motor</button>
           <button class="cancel">Cancel motion</button></div>
@@ -139,24 +190,33 @@
     let lastMotorSequence=null;
     let cameraBusy=false;
     let pwmScaleDirty=false;
+    let recording=false,recorded=[],recordStarted=0,replay=null;
     const activeMotionStates=new Set(['starting','moving','settling','reversal_dwell','retrying','setting_home']);
     function motionActive(){return activeMotionStates.has(latest?.motion?.state);}
+    function baseCenters(width){const half=(latest?.display_geometry?.base_spacing_m??.4)*510/2;return [width/2-half,width/2+half];}
+    function shapePoints(shape){return shape?.display_points??shape?.points;}
+    function smoothPath(ctx,points){ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);
+      for(let i=0;i<points.length-1;i++){const a=points[Math.max(0,i-1)],b=points[i],c=points[i+1],d=points[Math.min(points.length-1,i+2)];
+        ctx.bezierCurveTo(b.x+(c.x-a.x)/6,b.y+(c.y-a.y)/6,c.x-(d.x-b.x)/6,c.y-(d.y-b.y)/6,c.x,c.y);}}
     function cadArm(ctx,points,cx,color){if(!points)return;const scale=510,baseY=68;
       const screen=[{x:cx,y:baseY},...points.map(p=>({x:cx+p.x*scale,y:baseY+p.y*scale}))];
       ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#155b43';ctx.lineWidth=13;
-      ctx.beginPath();ctx.moveTo(screen[0].x,screen[0].y);screen.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));ctx.stroke();
-      ctx.strokeStyle=color;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(screen[0].x,screen[0].y);screen.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));ctx.stroke();
+      smoothPath(ctx,screen);ctx.stroke();
+      ctx.strokeStyle=color;ctx.lineWidth=3;smoothPath(ctx,screen);ctx.stroke();
       screen.slice(1).forEach((p,i)=>{const prev=screen[i],next=screen[Math.min(i+2,screen.length-1)];
         const angle=Math.atan2(next.y-prev.y,next.x-prev.x);ctx.save();ctx.translate(p.x,p.y);ctx.rotate(angle);
         ctx.fillStyle='#16805a';ctx.strokeStyle=color;ctx.lineWidth=2;ctx.fillRect(-24,-5,48,10);ctx.strokeRect(-24,-5,48,10);ctx.restore();
         ctx.fillStyle=color;ctx.beginPath();ctx.arc(p.x,p.y,5,0,Math.PI*2);ctx.fill();});}
     function drawFront(){const c=document.querySelector('#front-view'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);
-      const armX=[c.width*.32,c.width*.68];
+      const armX=baseCenters(c.width);
       ctx.fillStyle='#173e5b';ctx.fillRect(90,28,c.width-180,28);ctx.fillStyle='#d88a00';
       armX.forEach(x=>{ctx.fillRect(x-55,18,110,20);ctx.fillRect(x-34,38,68,18);});
       ctx.fillStyle='#8aa5b6';ctx.font='13px system-ui';ctx.fillText('frame and motors · front view',20,18);
-      const a1=latest?.arms?.arm_1,a2=latest?.arms?.arm_2;cadArm(ctx,a1?.current?.points,armX[0],'#42d4f4');cadArm(ctx,a2?.current?.points,armX[1],'#42d4f4');
-      if(a1?.feasible?.points)cadArm(ctx,a1.feasible.points,armX[0],'#59e391');if(a2?.feasible?.points)cadArm(ctx,a2.feasible.points,armX[1],'#59e391');
+      const a1=latest?.arms?.arm_1,a2=latest?.arms?.arm_2;cadArm(ctx,shapePoints(a1?.current),armX[0],'#42d4f4');cadArm(ctx,shapePoints(a2?.current),armX[1],'#42d4f4');
+      if(a1?.feasible?.points)cadArm(ctx,shapePoints(a1.feasible),armX[0],'#59e391');if(a2?.feasible?.points)cadArm(ctx,shapePoints(a2.feasible),armX[1],'#59e391');
+      [a1,a2].forEach((arm,i)=>{const target=arm?.projection?.tip_target;if(!target)return;
+        ctx.beginPath();ctx.arc(armX[i]+target.x*510,68+target.y*510,target.radius*510,0,Math.PI*2);
+        ctx.fillStyle='#ffad4226';ctx.fill();ctx.strokeStyle=arm.projection.tip_reachable?'#ffad42':'#ff6174';ctx.lineWidth=2;ctx.setLineDash([5,4]);ctx.stroke();ctx.setLineDash([]);});
       ctx.fillStyle='#dceaf2';ctx.fillText('ARM 1',armX[0]-23,82);ctx.fillText('ARM 2',armX[1]-23,82);}
     function sampleCurrents(m){
       if(m.sequence==null||m.sequence===lastMotorSequence)return;lastMotorSequence=m.sequence;
@@ -180,21 +240,25 @@
       const state=latest?.arms?.[arm];
       const model=article.querySelector('.model');
       if(state?.model?.available){const tag=state.model.approved?'approved':'candidate';
+        const low=Math.min(Math.abs(state.model.curvature_min),Math.abs(state.model.curvature_max)),high=Math.max(Math.abs(state.model.curvature_min),Math.abs(state.model.curvature_max));
         const fit=state.model.converged===false?' · not converged':'';
-        model.textContent=`${tag}${fit} · κ ${state.model.curvature_min.toFixed(3)}…${state.model.curvature_max.toFixed(3)} m⁻¹ · q ${state.model.q_min.toFixed(0)}…${state.model.q_max.toFixed(0)}`;
-        const input=article.querySelector('.curvature');input.title=`Valid range: ${state.model.curvature_min.toFixed(3)}…${state.model.curvature_max.toFixed(3)} m⁻¹`;
+        model.textContent=`${tag}${fit} · |κ| ${low.toFixed(3)}…${high.toFixed(3)} m⁻¹ · q ${state.model.q_min.toFixed(0)}…${state.model.q_max.toFixed(0)}`;
+        const input=article.querySelector('.curvature');input.title=`Curvatura positiva: ${low.toFixed(3)}…${high.toFixed(3)} m⁻¹`;
       }else model.textContent='model not loaded';
-      article.querySelector('.project').disabled=!state?.model?.available;
+      article.querySelector('.project').disabled=Boolean(replay)||!state?.model?.available;
       const moving=motionActive();
-      article.querySelector('.execute').disabled=!latest?.motor_execute_enabled||!latest?.home_calibrated||!local[arm].ready||moving;
+      article.querySelector('.execute').disabled=Boolean(replay)||!latest?.motor_execute_enabled||!latest?.home_calibrated||!local[arm].ready||moving||state?.projection?.tip_reachable===false;
       article.querySelector('.cancel').disabled=!moving||latest?.motion?.arm!==arm;
       if(state?.projection){let text=`requested κ=${Number(state.projection.curvature_target??0).toFixed(3)} m⁻¹ · predicted κ=${Number(state.projection.curvature_achieved??0).toFixed(3)} m⁻¹ · target q=${state.projection.q.toFixed(2)}`;
+        if(state.projection.mode==='tip')text=`Zona punta: ${state.projection.tip_reachable?'raggiungibile dal modello':'FUORI DALLA ZONA APPRESA'} · distanza centro ${(state.projection.tip_distance_m*1000).toFixed(1)} mm · encoder ${state.projection.q.toFixed(0)}`;
         if(state.projection.curvature_clamped)text+=` · OUT OF RANGE: use ${state.projection.curvature_min.toFixed(3)}…${state.projection.curvature_max.toFixed(3)}`;
         if(latest?.motion?.arm===arm)text+=` · motion ${latest.motion.state.replaceAll('_',' ')} · q=${Number(latest.motion.current_q??0).toFixed(0)}`;
         if(latest?.motion?.arm==='both'){const q=latest.motion.current_q?.[arm]??latest?.motor?.encoder_counts?.[arm==='arm_1'?0:1]??0;
           text+=` · motion ${latest.motion.state.replaceAll('_',' ')} · q=${Number(q).toFixed(0)}`;}
         article.querySelector('.detail').textContent=text;}
-      if(local[arm].error)article.querySelector('.detail').innerHTML=`<span class="warn">${local[arm].error}</span>`;
+      if(local[arm].error)article.querySelector('.detail').textContent=local[arm].error;
+      const m=latest?.motor,axis=arm==='arm_1'?0:1;
+      article.querySelector('.live-metrics').innerHTML=`<span>Encoder raw <b>${m?.encoder_counts?.[axis]??'—'}</b></span><span>Corrente <b>${Number(m?.current_a_host?.[axis]??NaN).toFixed(2)} A</b></span><span>PWM <b>${m?.applied_commands?.[axis]??'—'}</b></span>`;
     }
     function setTelemetry(s){
       const m=s.motor||{},enc=m.encoder_counts||[],cur=m.current_a_host||[];
@@ -206,28 +270,42 @@
       const v=s.vision||{};document.querySelector('#vision').textContent=(v.complete_arms||[]).join(', ')||'incomplete';
       document.querySelector('#camera-status').textContent=`Detected IDs: ${(v.detected_ids||[]).join(', ')||'none'} · ${Number(v.processed_fps||0).toFixed(1)} Hz`;
       document.querySelector('#health').textContent=`frame ${v.frame??'—'} · reference ${v.reference_frame_locked?'locked':'waiting'} · ${s.home_calibrated?'HOME OK':'HOME REQUIRED'} · motors ${s.motor_execute_enabled?'ENABLED':'disabled'} · mode ${s.motion_mode??'—'}`;
-      const moving=motionActive();document.querySelector('#project-both').disabled=moving;
-      document.querySelector('#execute-both').disabled=moving||!local.arm_1.ready||!local.arm_2.ready||!s.motor_execute_enabled||!s.home_calibrated;
-      document.querySelector('#home-both').disabled=moving||!s.motor_execute_enabled||!s.home_calibrated;
+      const moving=motionActive();document.querySelector('#project-both').disabled=Boolean(replay)||moving;
+      document.querySelector('#execute-both').disabled=Boolean(replay)||moving||!local.arm_1.ready||!local.arm_2.ready||!s.motor_execute_enabled||!s.home_calibrated||Object.values(s.arms||{}).some(a=>a.projection?.tip_reachable===false);
+      document.querySelector('#home-both').disabled=Boolean(replay)||moving||!s.motor_execute_enabled||!s.home_calibrated;
       const telemetryReady=Array.isArray(m.applied_commands)&&m.applied_commands.length===2&&Array.isArray(m.requested_commands)&&m.requested_commands.length===2;
       const stopped=telemetryReady&&m.applied_commands.every(v=>Number(v)===0)&&m.requested_commands.every(v=>Number(v)===0);
-      document.querySelector('#set-home').disabled=moving||!stopped;
-      document.querySelector('#apply-pwm-scale').disabled=moving||!stopped;
+      document.querySelector('#set-home').disabled=Boolean(replay)||moving||!stopped;
+      document.querySelector('#apply-pwm-scale').disabled=Boolean(replay)||moving||!stopped;
       if(!pwmScaleDirty)document.querySelector('#pwm-scale').value=String(Number(s.pwm_scale_percent??20));
       document.querySelector('#stop-all').disabled=!moving;
     }
-    async function update(){try{const r=await fetch('/api/state');latest=await r.json();sampleCurrents(latest.motor||{});setTelemetry(latest);drawFront();drawCurrentChart();
+    function drawPipeline(){const arm=document.querySelector('#pipeline-arm').value,a=latest?.arms?.[arm],p=a?.projection,plan=p?.motion_plan;
+      if(replay){const axis=arm==='arm_1'?0:1;document.querySelector('#flow-input').textContent='Demo registrata';document.querySelector('#flow-q').textContent=`${latest?.motor?.encoder_counts?.[axis]??'—'} count registrati`;document.querySelector('#flow-v').textContent='Replay';document.querySelector('#flow-current-q').textContent='Encoder acquisito durante la registrazione';document.querySelector('#flow-limits').textContent='Nessun comando inviato ai motori';document.querySelector('#flow-model').textContent='Animazione illustrativa della rete · non inferenza online';document.querySelector('#flow-status').textContent='REPLAY DI SEGNALI REGISTRATI · rete illustrativa, non risultato di training o controllo neurale';return;}
+      document.querySelector('#flow-input').textContent=!p?'—':p.mode==='tip'?`Zona r=${(p.tip_target.radius*1000).toFixed(0)} mm`:`κ ${Number(p.curvature_target).toFixed(3)} m⁻¹`;
+      document.querySelector('#flow-q').textContent=p?`${Number(p.q).toFixed(0)} count`:'—';
+      document.querySelector('#flow-current-q').textContent=`Posizione al calcolo ${plan?.current_q?.toFixed(1)??'—'} count`;
+      document.querySelector('#flow-v').textContent=plan?`${plan.desired_velocity_counts_s.toFixed(1)} count/s`:'—';
+      document.querySelector('#flow-limits').textContent=plan?`Avvio ${plan.initial_velocity_counts_s.toFixed(2)} count/s · a max ${plan.maximum_acceleration_counts_s2.toFixed(0)} count/s²`:'Velocità calcolata dal controllore';
+      document.querySelector('#flow-model').textContent=`MLP ${a?.model?.architecture?.join(' → ')??'—'}: encoder → forma. Ricerca inversa per il target.`;
+      const axis=arm==='arm_1'?0:1,measured=latest?.velocity_controller?.velocity?.[axis],reference=latest?.velocity_controller?.reference?.[axis];
+      if(Number.isFinite(measured))document.querySelector('#flow-limits').textContent+=` · misurata ${measured.toFixed(1)} count/s · riferimento ${Number(reference??0).toFixed(1)}`;
+      document.querySelector('#flow-status').textContent=!p?'Calcola un target per vedere encoder e velocità pianificati. Il calcolo non muove il robot.':p.tip_reachable===false?'Zona non raggiungibile secondo il modello: scegli un altro bersaglio.':`Modello ${a.model?.approved?'approvato':'candidato'} · previsione da verificare sul setup attuale · velocità pianificata, non misura istantanea${latest?.motor_execute_enabled?'':' · movimento disabilitato'}`;
+    }
+    async function update(){try{if(replay){const elapsed=(performance.now()-replay.started)/1000;while(replay.index+1<recorded.length&&recorded[replay.index+1].t<=elapsed)replay.index++;latest=recorded[replay.index].state;if(replay.index===recorded.length-1){document.querySelector('#demo-label').textContent='REPLAY terminato · torna live per i segnali attuali';}}else{const r=await fetch('/api/state');latest=await r.json();if(recording){recorded.push({t:(performance.now()-recordStarted)/1000,state:JSON.parse(JSON.stringify(latest))});if(recorded.length>=1500)finishRecording();}}sampleCurrents(latest.motor||{});setTelemetry(latest);drawFront();drawCurrentChart();drawPipeline();
       document.querySelectorAll('.arm').forEach(a=>draw(a,a.dataset.arm));}catch(e){document.querySelector('#health').textContent='dashboard offline';}}
-    function refreshCamera(){if(cameraBusy)return;cameraBusy=true;const image=document.querySelector('#camera-view');
+    function refreshCamera(){if(replay||cameraBusy)return;cameraBusy=true;const image=document.querySelector('#camera-view');
       image.onload=()=>{cameraBusy=false;};image.onerror=()=>{cameraBusy=false;};image.src=`/api/camera.jpg?t=${Date.now()}`;}
     async function project(arm){const a=document.querySelector(`[data-arm="${arm}"]`);
+      local[arm].ready=false;
+      if(a.querySelector('.mode').value==='tip')return projectTip(arm);
       const raw=a.querySelector('.curvature').value.trim().replace(',','.');const curvature=Number(raw);
-      if(!raw||!Number.isFinite(curvature)){a.querySelector('.detail').innerHTML='<span class="warn">Enter a numeric curvature.</span>';return false;}
+      if(!raw||!Number.isFinite(curvature)||curvature<0){a.querySelector('.detail').innerHTML='<span class="warn">Inserisci una curvatura positiva.</span>';return false;}
       try{const r=await fetch('/api/curvature',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({arm,curvature})});const out=await r.json();
         if(!r.ok){local[arm].error=out.error;draw(a,arm);return false;}
         local[arm].error=null;
-        latest.arms[arm].feasible={points:out.feasible};latest.arms[arm].projection=out.projection;draw(a,arm);return true;
+        latest.arms[arm].feasible={points:out.feasible};latest.arms[arm].projection=out.projection;draw(a,arm);drawPipeline();return true;
       }catch(e){a.querySelector('.detail').innerHTML='<span class="warn">Dashboard communication error.</span>';return false;}}
     async function execute(arm){const p=latest?.arms?.[arm]?.projection;if(!p)return;
       const current=Number(p.q_current??0),target=Number(p.q);
@@ -235,7 +313,7 @@
       const r=await fetch('/api/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({arm})});
       const out=await r.json();if(!r.ok)local[arm].error=out.error;else local[arm].error=null;await update();}
     async function cancel(){await fetch('/api/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});await update();}
-    async function projectBoth(){const results=await Promise.all(['arm_1','arm_2'].map(project));return results.every(Boolean);}
+    async function projectBoth(){const results=await Promise.all(['arm_1','arm_2'].map(async arm=>{local[arm].ready=await project(arm);return local[arm].ready;}));return results.every(Boolean);}
     async function executeBoth(){if(!local.arm_1.ready||!local.arm_2.ready)return;
       const targets={arm_1:Math.round(latest.arms.arm_1.projection.q),arm_2:Math.round(latest.arms.arm_2.projection.q)};
       if(!confirm(`Move both arms to the requested shapes?\nInternal targets: ${targets.arm_1} / ${targets.arm_2}`))return;
@@ -250,10 +328,16 @@
     async function applyPwmScale(){const percent=Number(document.querySelector('#pwm-scale').value);
       const r=await fetch('/api/pwm-scale',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({percent})});
       const out=await r.json();if(!r.ok)alert(out.error);else{pwmScaleDirty=false;document.querySelector('#health').textContent=`${out.message} · motors stopped`;}await update();}
-    function presetDemo(){const values={arm_1:'-0.980',arm_2:'0.921'};
+    function presetDemo(){const values={arm_1:'0.980',arm_2:'0.921'};
       Object.entries(values).forEach(([arm,value])=>{document.querySelector(`[data-arm="${arm}"] .curvature`).value=value;local[arm].ready=false;local[arm].error=null;});
       document.querySelectorAll('.arm').forEach(a=>draw(a,a.dataset.arm));}
     document.querySelectorAll('.arm').forEach(a=>{const arm=a.dataset.arm;
+      const mode=document.createElement('select');mode.className='mode';mode.innerHTML='<option value="curvature">Curvatura κ</option><option value="tip">Zona punta</option>';a.querySelector('.controls').prepend(mode);
+      const fields=document.createElement('div');fields.className='tip-fields';fields.hidden=true;fields.style.display='none';fields.innerHTML='<label>X punta [mm]<input class="tip-x" type="number" value="0" step="1"></label><label>Y punta [mm]<input class="tip-y" type="number" value="540" step="1"></label><label>Raggio [mm]<input class="tip-radius" type="number" min="1" value="15" step="1"></label>';
+      a.querySelector('.controls').after(fields);
+      const metrics=document.createElement('div');metrics.className='live-metrics';a.append(metrics);
+      mode.onchange=()=>{fields.hidden=mode.value!=='tip';fields.style.display=mode.value==='tip'?'flex':'none';a.querySelector('.curvature').parentElement.style.display=mode.value==='tip'?'none':'';local[arm].ready=false;};
+      fields.querySelectorAll('input').forEach(input=>input.oninput=()=>{local[arm].ready=false;local[arm].error=null;draw(a,arm);});
       a.querySelector('.project').onclick=async()=>{local[arm].ready=await project(arm);draw(a,arm);};
       a.querySelector('.execute').onclick=()=>execute(arm);a.querySelector('.cancel').onclick=cancel;
       a.querySelector('.curvature').oninput=()=>{local[arm].ready=false;local[arm].error=null;draw(a,arm);};});
@@ -265,6 +349,24 @@
     document.querySelector('#pwm-scale').onchange=()=>{pwmScaleDirty=true;};
     document.querySelector('#apply-pwm-scale').onclick=applyPwmScale;
     document.querySelector('#stop-all').onclick=cancel;
+    document.querySelector('#pipeline-arm').onchange=drawPipeline;
+    document.querySelector('#front-view').onclick=e=>{const arm=document.querySelector('#pipeline-arm').value,a=document.querySelector(`[data-arm="${arm}"]`),canvas=e.currentTarget,rect=canvas.getBoundingClientRect();
+      const x=(e.clientX-rect.left)*canvas.width/rect.width,y=(e.clientY-rect.top)*canvas.height/rect.height,cx=baseCenters(canvas.width)[arm==='arm_1'?0:1];
+      a.querySelector('.mode').value='tip';a.querySelector('.mode').onchange();a.querySelector('.tip-x').value=Math.round((x-cx)/510*1000);a.querySelector('.tip-y').value=Math.round((y-68)/510*1000);};
+    const network=document.querySelector('#network');let networkSvg='';const layers=[1,4,4,3],positions=layers.map((count,l)=>Array.from({length:count},(_,i)=>({x:15+l*65,y:40+(i-(count-1)/2)*19})));
+    positions.slice(0,-1).forEach((layer,l)=>layer.forEach(p=>positions[l+1].forEach(q=>networkSvg+=`<line x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}" stroke="#294f62"/>`)));
+    positions.forEach(layer=>layer.forEach(p=>networkSvg+=`<circle cx="${p.x}" cy="${p.y}" r="5" fill="#42d4f4"/>`));network.innerHTML=networkSvg;
+    async function projectTip(arm){const a=document.querySelector(`[data-arm="${arm}"]`),values=['.tip-x','.tip-y','.tip-radius'].map(key=>Number(a.querySelector(key).value)/1000);
+      if(!values.every(Number.isFinite)||values[2]<=0){local[arm].error='Coordinate o raggio non validi';draw(a,arm);return false;}
+      try{const r=await fetch('/api/tip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({arm,x:values[0],y:values[1],radius:values[2],coordinate_frame:'home_display'})}),out=await r.json();
+        if(!r.ok)throw Error(out.error);local[arm].error=null;latest.arms[arm].feasible={points:out.feasible};latest.arms[arm].projection=out.projection;draw(a,arm);drawFront();drawPipeline();return out.projection.tip_reachable;
+      }catch(e){local[arm].error=e.message;draw(a,arm);return false;}}
+    document.querySelector('#record-demo').onclick=()=>{if(replay||motionActive())return;recorded=[];recordStarted=performance.now();recording=true;document.querySelector('#record-demo').disabled=true;document.querySelector('#save-demo').disabled=false;document.querySelector('#play-demo').disabled=true;document.querySelector('#demo-label').textContent='REGISTRAZIONE · segnali reali · durata massima 5 minuti';};
+    function finishRecording(){recording=false;document.querySelector('#record-demo').disabled=false;document.querySelector('#save-demo').disabled=true;document.querySelector('#play-demo').disabled=false;try{localStorage.setItem('rosaiaRecordedDemo',JSON.stringify(recorded));document.querySelector('#demo-label').textContent=`Salvati ${recorded.length} campioni nel browser`;}catch(e){document.querySelector('#demo-label').textContent='Demo in memoria; spazio browser insufficiente per salvarla';}}
+    document.querySelector('#save-demo').onclick=finishRecording;
+    document.querySelector('#export-demo').onclick=()=>{let samples=recorded;if(!samples.length){try{samples=JSON.parse(localStorage.getItem('rosaiaRecordedDemo')||'[]');}catch(e){samples=[];}}if(!samples.length){document.querySelector('#demo-label').textContent='Nessuna registrazione da esportare';return;}const file=new Blob([JSON.stringify({format:'ROSAIA recorded signals v1',neural_visualization:'illustrative',samples},null,2)],{type:'application/json'}),url=URL.createObjectURL(file),link=document.createElement('a');link.href=url;link.download='ROSAIA_demo_segnali.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+    document.querySelector('#play-demo').onclick=()=>{if(recording||motionActive())return;if(!recorded.length){try{recorded=JSON.parse(localStorage.getItem('rosaiaRecordedDemo')||'[]');}catch(e){recorded=[];}}if(!recorded.length){document.querySelector('#demo-label').textContent='Registra prima una demo';return;}replay={started:performance.now(),index:0};document.body.classList.add('illustrative');document.querySelector('#exit-replay').disabled=false;document.querySelector('#record-demo').disabled=true;document.querySelector('#camera-view').style.visibility='hidden';document.querySelector('#demo-label').textContent='REPLAY · rete illustrativa · nessun movimento fisico';currentHistory.length=0;update();};
+    document.querySelector('#exit-replay').onclick=()=>{replay=null;document.body.classList.remove('illustrative');document.querySelector('#exit-replay').disabled=true;document.querySelector('#record-demo').disabled=false;document.querySelector('#camera-view').style.visibility='';document.querySelector('#demo-label').textContent='LIVE · segnali misurati';local.arm_1.ready=false;local.arm_2.ready=false;currentHistory.length=0;update();};
     presetDemo();
     setInterval(update,200);setInterval(refreshCamera,200);update();refreshCamera();
   </script>

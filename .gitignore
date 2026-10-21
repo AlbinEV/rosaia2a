@@ -19,7 +19,8 @@ data/models/
 data/reports/
 data/logs/
 data/workflows/
-data/control_tests/
+data/control_tests/*
+!data/control_tests/jog_nominals.json
 
 # Python
 __pycache__/
@@ -39,3 +40,6 @@ backup/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# CAD ha un repository Git indipendente (checkpoint/versioni propri).
+/CAD-IROS/

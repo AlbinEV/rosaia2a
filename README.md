@@ -1,8 +1,81 @@
-# ROSAIA LEGO — two single-actuator continuum arms
+# ROSAIA — CAD, prototipi e controllo
+
+Autore e manutentore: **Albin Bajrami**.
+
+Repository: https://github.com/AlbinEV/rosaia2a
+
+## Versioni Ubuntu e Windows
+
+- `main` e `ubuntu`: riferimento Ubuntu della demo OPEN/CLOSE su banco.
+- `windows`: ramo di sviluppo per il porting; **non ancora eseguibile né
+  validato su Windows**. Stato e attività in [docs/WINDOWS.md](docs/WINDOWS.md).
+
+L'interfaccia è web, ma il backend deve girare sul computer collegato a board
+e camera. Aprire il solo HTML non permette di controllare l'hardware.
+
+## Avvio rapido della demo — Ubuntu
+
+Ambiente richiesto: Ubuntu 24.04, ROS 2 Jazzy, colcon, dipendenze dichiarate nei
+`package.xml`, SDK RealSense con `librealsense2-dev`. Lo script di preparazione
+compila il progetto: non installa Ubuntu, ROS o il firmware.
+
+```bash
+git clone --branch ubuntu https://github.com/AlbinEV/rosaia2a.git
+cd rosaia2a
+bash 01_prepara.sh --test
+bash 03_demo_finale.sh
+```
+
+Collegare Bluno e RealSense D435, controllare configurazione della porta seriale
+in `ros2_ws/src/bluno_motor_bridge/config/controller.yaml`, alimentazione,
+tendini e visibilità dei marker. L'accesso seriale deve essere consentito al
+proprio utente. Il firmware deve essere quello descritto in [firmware](firmware/README.md).
+Alla richiesta `HOME`, confermare soltanto con i bracci realmente nella HOME
+meccanica di calibrazione. L'avvio non comanda una traiettoria.
+
+Aprire **http://127.0.0.1:8767**: OPEN, CLOSE, STOP e intensità PWM.
+Per arrestare lo stack dopo STOP:
+
+```bash
+bash 03_demo_finale.sh stop
+```
+
+La guida completa è [GUIDA_DEMO.html](GUIDA_DEMO.html), da aprire localmente
+nel browser dopo il clone. `02_avvia.sh` avvia invece la dashboard tecnica
+sulla porta 8765: non è necessario per la demo finale e non va avviato come
+secondo controllore in parallelo.
+
+I nominali del banco sono inclusi in `data/control_tests/jog_nominals.json`:
+non sono universali e non autorizzano movimenti su una meccanica diversa.
+Registrazioni e log restano locali e non vengono pubblicati.
+
+## Dove lavorare
+
+| Attivita' | Percorso |
+|---|---|
+| CAD del nuovo braccio, anteprima singola | [CAD-IROS/03_BRACCIO_AVVOLGENTE_1U](CAD-IROS/03_BRACCIO_AVVOLGENTE_1U/README.md) |
+| File di stampa correnti | [CAD-IROS/STAMPA](CAD-IROS/STAMPA) — collegamento, non una copia |
+| FEM e vita ciclica preliminari | [Analisi anima](CAD-IROS/03_BRACCIO_AVVOLGENTE_1U/ANALISI_FEM/ANIMA_2026-10-09/README.md) |
+| Modelli CAD precedenti | [CAD-IROS/ARCHIVIO_MODELLI](CAD-IROS/ARCHIVIO_MODELLI/README.md) |
+| Hardware e cablaggi | [Documento scheda](docs/hardware/CONTROL_BOARD_BLUNO_MAKERFABS_ROS2_JAZZY.md) |
+| Firmware | [firmware](firmware/README.md) |
+| Software ROS, comandi e acquisizione | `ros2_ws/`, `scripts/`, `config/`, `data/` |
+| Guida operativa | [docs/operator_guide.html](docs/operator_guide.html) |
+
+Il workspace superiore e il CAD sono **due repository Git indipendenti**.
+Checkpoint prima del riordino del 9 ottobre: workspace `d8af06b`, CAD
+`2287d87`. Il documento hardware nella vecchia posizione e le versioni CAD
+storiche sono collegamenti di compatibilita'. Nessuna modifica a robot,
+firmware, dati o percorsi ROS e' necessaria per questo riordino.
+Il workspace RoboSoft di disseminazione resta separato e non viene spostato.
 
 This repository is the ROS 2 Jazzy starting point for controlling two
 deformable arms. Each arm has one primary motor; the antagonistic motor used by
 the original ROSAIA platform is not part of this system.
+
+La descrizione software sottostante riguarda quel setup a due bracci.
+Il nuovo CAD avvolgente e' un altro sviluppo: il suo riordino non implica
+che firmware, controllori o calibrazioni siano gia' adattati al nuovo gripper.
 
 The current implementation contains the motor/encoder/current bridge, the
 visual-state frontend, a timestamp-aware experiment recorder, and the first

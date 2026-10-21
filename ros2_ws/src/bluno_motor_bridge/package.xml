@@ -4,7 +4,7 @@
   <name>bluno_motor_bridge</name>
   <version>0.1.0</version>
   <description>Fail-safe ROS 2 serial bridge for two single-actuator ROSAIA arms.</description>
-  <maintainer email="maintainer@example.com">ROSAIA maintainers</maintainer>
+  <maintainer email="AlbinEV@users.noreply.github.com">Albin Bajrami</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_python</buildtool_depend>

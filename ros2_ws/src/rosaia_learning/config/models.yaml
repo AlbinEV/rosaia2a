@@ -1,9 +1,0 @@
-jacobian_publisher:
-  ros__parameters:
-    arm_names: ["arm_1", "arm_2"]
-    axis_indices: [0, 1]
-    encoder_signs: [1, -1]
-    model_directories: ["", ""]
-    output_topics: ["/arm_1/jacobian", "/arm_2/jacobian"]
-    publish_rate_hz: 30.0
-    maximum_encoder_age_s: 0.15

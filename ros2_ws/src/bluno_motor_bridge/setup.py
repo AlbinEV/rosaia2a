@@ -18,8 +18,8 @@ setup(
     install_requires=['setuptools'],
     tests_require=['pytest'],
     zip_safe=True,
-    maintainer='ROSAIA maintainers',
-    maintainer_email='maintainer@example.com',
+    maintainer='Albin Bajrami',
+    maintainer_email='AlbinEV@users.noreply.github.com',
     description='Fail-safe ROS 2 serial bridge for two single-actuator ROSAIA arms.',
     license='Apache-2.0',
     entry_points={
